@@ -8,6 +8,7 @@ Fastest door-to-door commute planner for a **trifold bicycle + MRT/LRT** in Sing
 - an *Open in Google Maps* button for each cycling leg (start to end, Google picks its own cycling route),
 - an **intro screen** explaining how to use the app, with an "add to home screen" prompt where the browser supports it,
 - **search by building, business or station name** (merges MRT/LRT stations, [OneMap](https://www.onemap.gov.sg/) for buildings, landmarks and postal codes, and [Photon](https://photon.komoot.io/) for OpenStreetMap shops, cafes, clinics and other businesses), with a clear button and keyboard support,
+- **which station exit to use** for every train ride ("Enter at Exit A · Leave at Exit 4"), drawn on the map, with the cycling routed to and from that exact exit,
 - **estimated MRT/LRT fares** per train ride and per plan (adult, student or senior/disability card fares),
 - a button to reset the map view, and on phones a draggable bottom sheet so the map can fill almost the whole screen,
 - a **settings page**: light / dark / auto theme (dark mode also darkens the map), cycling speed, longest single ride, cycling between stations on/off, "prefer trains over cycling", pick which MRT/LRT lines to use, a departure time (peak or off-peak is worked out from the time and day), fold and unfold times, extra time per line change, avoid-transfers, number of plans (saved on your device),
@@ -41,6 +42,7 @@ Needs Python 3.11+ (`pip install osmium numpy`) and Node 20+. Download `Singapor
 python extract_stations.py     # MRT/LRT station positions       -> data/stations_raw.json
 python build_mrt.py            # stations + links + travel times -> data/stations.json, mrt_edges.json
 python build_shapes.py         # snap links onto real track       -> data/mrt_shapes.json
+python build_entrances.py      # station exits (Exit A, B, C...)  -> frontend/data/entrances.json
 python build_land.py           # Singapore land outline (map limits, pin checks) -> frontend/data/sg_land.json
 python export_bikegraph.py     # compact bike graph (keeps the strongly connected core, so every pin can be left and entered) -> frontend/data/bg_*.bin
 copy data\stations.json data\mrt_edges.json data\mrt_shapes.json frontend\data\
@@ -55,6 +57,7 @@ Bump `VERSION` in `frontend/sw.js` after changing data so installed apps refresh
 ```
 node tests/fares.test.mjs     # fare bands, early-bird discount, 2026 fare review, peak detection
 node tests/routing.test.mjs   # places that must be routable (airport, checkpoints...), random trips
+node tests/entrances.test.mjs  # exit data sanity and the exit choice
 node tests/version.test.mjs   # page, script and service worker carry the same build id
 ```
 
@@ -74,6 +77,10 @@ There is no public timetable or transfer-time dataset for the MRT/LRT, so the ap
 - **Waiting for a train:** half the gap between trains, using LTA's published frequencies: [2-3 min at peak and about 5 min off-peak, Thomson-East Coast Line 5 and 6 min](https://lta.gov.sg/content/ltagov/en/newsroom/2024/9/media-replies/public-transport---keeping-it-convenient--affordable.html). LRT is assumed at 3 / 6 min. Peak is worked out from the departure time (now, or one you pick, in Singapore time): weekdays 7-9 am and 5-7 pm. Public holidays are not known to the app.
 - **Changing lines:** walking time plus the wait for the next train on the new line. Walking defaults to 3 min. [City Hall](https://landtransportguru.net/city-hall-station/), Raffles Place, Jurong East and Tanah Merah (Changi Airport branch) are cross-platform (1 min). Tampines (about 300 m linkway, 6.5 min) and [Newton](https://landtransportguru.net/newton-station/) (56 m linkway, 4 min) take longer, and the LRT at Bukit Panjang is about 200 m from the Downtown Line (4 min). These are estimates, and you can add or remove minutes per change in Settings.
 - **Boarding:** folding the bike, the gates and walking to the platform (2.5 min by default) plus the wait for the train. Leaving the system costs 2 min to exit and unfold.
+
+## Station exits
+
+Exits come from OpenStreetMap (`railway=subway_entrance` nodes with their letter or number), assigned to the nearest station: about 490 exits at 133 of the 190 stations (LRT stations and some MRT stations are not mapped with exits yet, and those simply show no exit). For each train ride the planner picks the exit that is **quickest to cycle to** from where you come from when boarding, and the exit **quickest to cycle away from** towards your next stop or destination when leaving, using the same bike router, and then draws the cycling leg to and from that exact exit. The data can be incomplete or out of date (closed exits, renumbering), so always check the signs in the station. Which train carriage or door to stand at is not published as open data, so the app does not suggest that.
 
 ## Fares
 

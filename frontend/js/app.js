@@ -1,5 +1,5 @@
 // Keep BUILD in step with <meta name="build"> in index.html and VERSION in sw.js (tests/version.test.mjs checks it)
-const BUILD = 'v7';
+const BUILD = 'v8';
 import { Router } from './router.js';
 import { Planner } from './planner.js';
 import { railFare, sgClock, timeInfo, polyKm, FARE_TYPES } from './fares.js';
@@ -45,9 +45,9 @@ if ('serviceWorker' in navigator) {
 const bin = f => fetch('data/' + f + '.gz').then(r => new Response(r.body.pipeThrough(new DecompressionStream('gzip'))).arrayBuffer());
 const json = f => fetch('data/' + f).then(r => r.json());
 const dataReady = Promise.all([bin('bg_nodes.bin'), bin('bg_edges.bin'), bin('bg_geom.bin'),
-  json('stations.json'), json('mrt_edges.json'), json('mrt_shapes.json'), json('bike_matrix.json')]);
+  json('stations.json'), json('mrt_edges.json'), json('mrt_shapes.json'), json('bike_matrix.json'), json('entrances.json')]);
 let planner = null;
-const plannerReady = dataReady.then(([n, e, g, st, ed, sh, bm]) => { planner = new Planner(new Router(n, e, g), st, ed, sh, bm); return planner; });
+const plannerReady = dataReady.then(([n, e, g, st, ed, sh, bm, en]) => { planner = new Planner(new Router(n, e, g), st, ed, sh, bm, en); return planner; });
 const landReady = json('sg_land.json');
 
 // ================= themes and map tiles =================
@@ -407,6 +407,13 @@ function addFares() {
   });
 }
 const money = x => '$' + x.toFixed(2);
+// which station exits to enter and leave by (the quickest to reach on this route)
+const exitsHtml = l => {
+  const parts = [];
+  if (l.enter) parts.push(`Enter at <b>Exit ${l.enter.label}</b>`);
+  if (l.exit) parts.push(`Leave at <b>Exit ${l.exit.label}</b>`);
+  return parts.length ? `<br><span class="exits">🚪 ${parts.join(' · ')}</span>` : '';
+};
 
 function render() {
   addFares();
@@ -420,8 +427,8 @@ function render() {
       <div class="split"><span>Cycling <b>${p.bike_km} km</b> · ${fmt(p.bike_min)}</span><span>MRT/LRT &amp; transfers <b>${fmt(p.mrt_min)}</b></span>${settings.showFares ? (p.fare > 0 ? `<span class="fare">Fare <b>≈ ${money(p.fare)}</b></span>` : '<span>No fare (cycling only)</span>') : ''}</div>
       ${p.legs.map(l => l.mode === 'bike'
         ? `<div class="leg"><span class="tag bike">BIKE</span><span>${l.from} → ${l.to}<br><span style="color:var(--mute)">${l.km} km · ${fmt(l.min)}</span><br><a class="gbtn" href="${gmaps(l)}" target="_blank" rel="noopener">🗺️ Open in Google Maps</a></span></div>`
-        : `<div class="leg"><span class="tag mrt" style="${l.segments.every(s => isLrt(s.line)) ? 'background:' + LRT_GREY : ''}">${l.segments.every(s => isLrt(s.line)) ? 'LRT' : 'MRT'}</span><span>${l.segments.map(s => `<b>${lineLabel(s.line)}</b> ${s.from} → ${s.to} (${s.stops} stops)`).join('<br>')}<br><span style="color:var(--mute)">${fmt(l.min)} incl. fold &amp; wait${settings.showFares ? ` · ${l.railKm.toFixed(1)} km · <b class="fare">≈ ${money(l.fare)}</b>` : ''}</span></span></div>`).join('')}
-    </div>`).join('') + note;
+        : `<div class="leg"><span class="tag mrt" style="${l.segments.every(s => isLrt(s.line)) ? 'background:' + LRT_GREY : ''}">${l.segments.every(s => isLrt(s.line)) ? 'LRT' : 'MRT'}</span><span>${l.segments.map(s => `<b>${lineLabel(s.line)}</b> ${s.from} → ${s.to} (${s.stops} stops)`).join('<br>')}${exitsHtml(l)}<br><span style="color:var(--mute)">${fmt(l.min)} incl. fold &amp; wait${settings.showFares ? ` · ${l.railKm.toFixed(1)} km · <b class="fare">≈ ${money(l.fare)}</b>` : ''}</span></span></div>`).join('')}
+    </div>`).join('') + note + (plans.some(p => p.legs.some(l => l.enter || l.exit)) ? '<div class="hint">Exits are the ones quickest to reach on your route. Exit data comes from OpenStreetMap and may be incomplete, so check the signs in the station.</div>' : '');
   document.querySelectorAll('.plan').forEach(el => el.onclick = () => show(+el.dataset.i));
   document.querySelectorAll('.gbtn').forEach(a => a.onclick = e => e.stopPropagation());
 }
@@ -463,6 +470,12 @@ function show(i) {
         L.marker(p, { pane: 'labels', icon: splitIcon(a, b, casing), keyboard: false }).bindTooltip(tip, { permanent: true, direction: 'right', offset: [14, 0] }).addTo(layer);
       }
       ring(segs[last].stop_pts[segs[last].stop_pts.length - 1], segs[last].stop_names[segs[last].stop_names.length - 1], lineColor(segs[last].line));
+      // the exits to use, drawn where they really are (the cycling route ends and starts there)
+      [l.enter, l.exit].forEach(x => {
+        if (!x) return;
+        L.circleMarker([x.lat, x.lon], { pane: 'labels', radius: 4, color: css('--accent'), weight: 2, fillColor: fill, fillOpacity: 1 }).addTo(layer);
+        L.marker([x.lat, x.lon], { pane: 'labels', interactive: false, keyboard: false, icon: L.divIcon({ className: 'exit-wrap', iconSize: [0, 0], html: `<span class="exit-pill">Exit ${x.label}</span>` }) }).addTo(layer);
+      });
       routeDotNames.add(segs[0].stop_names[0]); routeDotNames.add(segs[last].stop_names[segs[last].stop_names.length - 1]);
       for (let si = 0; si < last; si++) routeDotNames.add(segs[si].stop_names[segs[si].stop_names.length - 1]);
     }

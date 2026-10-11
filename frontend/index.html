@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <title>Bike-MRT</title>
-<meta name="build" content="v7">
+<meta name="build" content="v8">
 <script>
   // safety net: if something breaks (for example after an update left old and new files mixed), show a banner with a one-tap fix
   (function () {
@@ -113,6 +113,9 @@
   .leaflet-bar a:hover { background:var(--bg); }
   .leaflet-container .leaflet-control-attribution { background:color-mix(in srgb, var(--card) 80%, transparent); color:var(--mute); }
   .leaflet-control-attribution a { color:var(--accent); }
+  .exit-wrap { background:none; border:0; }
+  .exit-pill { position:absolute; left:7px; top:-9px; background:var(--card); color:var(--ink); border:2px solid var(--accent); border-radius:11px; padding:0 7px; font:700 11px/18px system-ui; white-space:nowrap; box-shadow:0 1px 4px rgba(0,0,0,.35); }
+  .exits { color:var(--ink); }
   #fatal { position:fixed; left:12px; right:12px; bottom:12px; z-index:4000; display:flex; gap:12px; align-items:center; justify-content:space-between; background:var(--card); color:var(--ink); border:1px solid var(--mrt); border-radius:12px; padding:10px 12px; box-shadow:var(--shadow); font-size:14px; }
   #fatal small { display:block; color:var(--mute); font-size:12px; }
   #fatal button { margin:0; width:auto; padding:8px 12px; flex:none; font-size:13px; }
@@ -214,7 +217,7 @@
     <ol class="steps">
       <li><span><b>Choose where from and to.</b> Type an address or postal code, tap 📍 and then the map, or press 🎯 to start from where you are. Pins can be dragged.</span></li>
       <li><span><b>Tap “Find fastest route”.</b> The app compares cycling the whole way, taking trains, and mixes of both, even cycle → train → cycle → train → cycle.</span></li>
-      <li><span><b>Read the plan.</b> Green <b>BIKE</b> legs are cycling, coloured <b>MRT</b> / <b>LRT</b> legs are trains, with an estimated fare. Tap a plan to see it on the map.</span></li>
+      <li><span><b>Read the plan.</b> Green <b>BIKE</b> legs are cycling, coloured <b>MRT</b> / <b>LRT</b> legs are trains, with an estimated fare and the station exits to enter and leave by. Tap a plan to see it on the map.</span></li>
       <li><span><b>Navigate each ride.</b> Every cycling leg has an <b>Open in Google Maps</b> button for turn-by-turn directions.</span></li>
       <li><span><b>Make it yours in ⚙️ Settings.</b> Dark mode, which lines to use, riding speed, longest ride, waiting and transfer times.</span></li>
     </ol>

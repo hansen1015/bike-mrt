@@ -44,12 +44,18 @@ class Heap { // tiny binary heap of [key, value]
 }
 
 export class Planner {
-  constructor(router, stations, mrtEdges, shapes, bikeMatrix) {
+  constructor(router, stations, mrtEdges, shapes, bikeMatrix, entrances = []) {
     this.router = router; this.stations = stations; this.mrtEdges = mrtEdges; this.shapes = shapes; this.matrix = bikeMatrix;
     this.byName = Object.fromEntries(stations.map(s => [s.name, [s.lat, s.lon]]));
     this.linesAt = {};
     for (const e of mrtEdges) for (const s of [e.a, e.b]) (this.linesAt[s] ||= new Set()).add(e.line);
     this.stationSnaps = stations.map(s => router.snap(s.lat, s.lon));
+    // station exits ("Exit A", "Exit B" ...) by station id; their road snaps are made when first needed
+    this.entByStation = new Map();
+    for (const e of entrances) {
+      if (!this.entByStation.has(e.s)) this.entByStation.set(e.s, []);
+      this.entByStation.get(e.s).push({ label: e.label, lat: e.lat, lon: e.lon, wc: !!e.wc, snap: undefined });
+    }
   }
 
   plan(origin, dest, opts = {}) {
@@ -82,7 +88,11 @@ export class Planner {
       const startOk = !!direct || toStations.some(Boolean), destOk = !!direct || fromStations.some(Boolean);
       plans.reason = !startOk ? 'start' : !destOk ? 'dest' : 'limits';
     }
-    plans.forEach(p => this._addGeometry(p, origin, dest, so, sd));
+    plans.forEach(p => this._addGeometry(p, origin, dest, so, sd, scale));
+    plans.sort((a, b) => a.total_min - b.total_min); // choosing exits can shift times slightly
+    plans.forEach((p, i) => { // name the plans from their final order
+      p.label = i === 0 ? "Fastest" : p.bike_km < plans[0].bike_km - 0.05 ? (i === 1 ? "Less cycling" : "Least cycling") : "Alternative";
+    });
     return plans;
   }
 
@@ -168,18 +178,81 @@ export class Planner {
   _snapOf(n, origin, dest, so, sd) { return n === "O" ? so : n === "D" ? sd : this.stationSnaps[+n.slice(1).split(":")[0]]; }
   _ptOf(n, origin, dest) { if (n === "O") return [origin.lat, origin.lon]; if (n === "D") return [dest.lat, dest.lon]; const s = this.stations[+n.slice(1).split(":")[0]]; return [s.lat, s.lon]; }
 
-  _addGeometry(plan, origin, dest, so, sd) {
-    for (const l of plan.legs) {
+  _stationOf(n) { return +n.slice(1).split(":")[0]; }
+
+  _exits(sid) {
+    const list = this.entByStation.get(sid) || [];
+    for (const e of list) if (e.snap === undefined) e.snap = this.router.snap(e.lat, e.lon);
+    return list.filter(e => e.snap);
+  }
+
+  // The exit of station `sid` that is quickest to reach from `other` (a router snap): reverse=false, you ride other -> exit.
+  // reverse=true: you ride exit -> other. Returns null when the station has no exit data.
+  _bestExit(sid, other, reverse) {
+    const ents = this._exits(sid);
+    if (!ents.length || !other) return null;
+    const res = this.router.oneToMany(other, ents.map(e => e.snap), reverse, 60);
+    let best = null;
+    res.forEach((r, i) => { if (r && (!best || r.min < best.min)) best = { e: ents[i], min: r.min }; });
+    if (best) return best.e;
+    const d = e => Router.dist(other.query, [e.lat, e.lon]);                   // unreachable by road: take the closest as the crow flies
+    return ents.reduce((a, b) => (d(a) <= d(b) ? a : b));
+  }
+
+  _addGeometry(plan, origin, dest, so, sd, scale) {
+    const legs = plan.legs, S = n => this._snapOf(n, origin, dest, so, sd);
+
+    // 1. for every train ride pick the exit to enter by (closest to where you come from) and the exit to leave by (closest to where you go next)
+    legs.forEach((l, i) => {
+      if (l.mode !== "mrt") return;
+      const prev = legs[i - 1] && legs[i - 1].mode === "bike" ? legs[i - 1] : null;
+      const next = legs[i + 1] && legs[i + 1].mode === "bike" ? legs[i + 1] : null;
+      let from = null;
+      if (prev) { const k = prev.parts.length - 1; from = k === 0 && prev._exitSnap ? prev._exitSnap : S(prev.parts[k][0]); }
+      else if (i === 0) from = so;
+      l.enter = this._bestExit(this._stationOf(l._u), from, false);
+      const to = next ? S(next.parts[0][1]) : sd;
+      l.exit = this._bestExit(this._stationOf(l._v), to, true);
+      if (next && l.exit) next._exitSnap = l.exit.snap;
+    });
+
+    // 2. cycle routes now run to / from those exact exits
+    legs.forEach((l, i) => {
       if (l.mode === "bike") {
-        l.coords = [];
-        for (const [u, v] of l.parts) {
-          const r = this.router.route(this._snapOf(u, origin, dest, so, sd), this._snapOf(v, origin, dest, so, sd));
-          if (r) l.coords.push(...r.coords);
-        }
-        delete l.parts;
+        const prevRide = legs[i - 1] && legs[i - 1].mode === "mrt" ? legs[i - 1] : null;
+        const nextRide = legs[i + 1] && legs[i + 1].mode === "mrt" ? legs[i + 1] : null;
+        l.coords = []; let min = 0, km = 0, ok = true;
+        l.parts.forEach(([u, v], k) => {
+          let a = S(u), b = S(v);
+          if (k === 0 && prevRide && prevRide.exit) a = prevRide.exit.snap;
+          if (k === l.parts.length - 1 && nextRide && nextRide.enter) b = nextRide.enter.snap;
+          const r = this.router.route(a, b) || this.router.route(S(u), S(v));
+          if (r) { l.coords.push(...r.coords); min += r.min * scale; km += r.km; } else ok = false;
+        });
+        if (ok && l.coords.length) { l.min = +min.toFixed(1); l.km = +km.toFixed(2); } // keep the planner's numbers if a part could not be re-routed
+        delete l.parts; delete l._exitSnap;
       } else l.coords = [];
       l.from_pt = this._ptOf(l._u, origin, dest); l.to_pt = this._ptOf(l._v, origin, dest);
       delete l._u; delete l._v;
+    });
+    // only now drop the road snaps from the exits (the cycling legs above needed them)
+    legs.forEach(l => { if (l.mode === "mrt") for (const k of ["enter", "exit"]) if (l[k]) l[k] = { label: l[k].label, lat: l[k].lat, lon: l[k].lon, wc: l[k].wc }; });
+
+    // a cycling stub of a few metres at the very start or end (the exit is right at your destination) is not worth a leg of its own:
+    // its minutes stay in the trip, added to the neighbouring train ride
+    for (let i = legs.length - 1; i >= 0; i--) {
+      const l = legs[i];
+      if (l.mode === "bike" && l.km < 0.06 && legs.length > 1 && (i === 0 || i === legs.length - 1)) {
+        const nb = legs[i === 0 ? 1 : i - 1];
+        if (nb && nb.mode === "mrt") { nb.min = +(nb.min + l.min).toFixed(1); legs.splice(i, 1); }
+      }
     }
+
+    // 3. totals follow the new cycling legs
+    const total = legs.reduce((t, l) => t + l.min, 0);
+    const bikes = legs.filter(l => l.mode === "bike");
+    const bikeMin = bikes.reduce((t, l) => t + l.min, 0);
+    plan.total_min = +total.toFixed(1); plan.bike_min = +bikeMin.toFixed(1); plan.mrt_min = +(total - bikeMin).toFixed(1);
+    plan.bike_km = +bikes.reduce((t, l) => t + l.km, 0).toFixed(2);
   }
 }
