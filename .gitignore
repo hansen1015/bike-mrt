@@ -1,0 +1,9 @@
+# local tooling / large inputs
+.venv/
+_old/
+/data/
+node_modules/
+*.log
+*.err
+# raw (uncompressed) graph files: only the .gz versions are published
+frontend/data/bg_*.bin
