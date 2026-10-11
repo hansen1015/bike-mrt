@@ -1,11 +1,11 @@
 // Bike-MRT service worker: makes the app installable and lets it open without signal.
 // Bump VERSION whenever the files in data/ change so phones re-download them.
-const VERSION = 'v2';
+const VERSION = 'v3';
 const CACHE = 'bike-mrt-' + VERSION;
-const SHELL = ['./', 'index.html', 'manifest.webmanifest', 'js/router.js', 'js/planner.js', 'lib/leaflet.js', 'lib/leaflet.css',
+const SHELL = ['./', 'index.html', 'manifest.webmanifest', 'js/app.js', 'js/router.js', 'js/planner.js', 'lib/leaflet.js', 'lib/leaflet.css',
   'icons/icon-192.png', 'icons/icon-512.png',
   'data/bg_nodes.bin.gz', 'data/bg_edges.bin.gz', 'data/bg_geom.bin.gz', 'data/bike_matrix.json',
-  'data/stations.json', 'data/mrt_edges.json', 'data/mrt_shapes.json'];
+  'data/sg_land.json', 'data/stations.json', 'data/mrt_edges.json', 'data/mrt_shapes.json'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));

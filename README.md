@@ -6,6 +6,8 @@ Fastest door-to-door commute planner for a **Brompton + MRT/LRT** in Singapore. 
 - every leg on a map (cycle routes along real roads and park connectors, rail along the real track),
 - the MRT/LRT lines, stations and transfers,
 - a Google Maps cycling link for each cycling leg,
+- a **settings page**: light / dark / auto theme (dark mode also darkens the map), cycling speed, longest single ride, cycling between stations on/off, "prefer trains over cycling", pick which MRT/LRT lines to use, fold/unfold/transfer times, avoid-transfers, peak-hour waits, number of plans (saved on your device),
+- a map limited to Singapore, with pins and GPS accepted only on Singapore land,
 - start from your **GPS location** (the 🎯 button), a searched address, or a pin dropped on the map.
 
 Everything runs **in your browser**: there is no backend. It is a static site that can be hosted for free (GitHub Pages) and installed on a phone as an app (PWA: open the site, then "Add to Home Screen").
@@ -34,6 +36,7 @@ Needs Python 3.11+ (`pip install osmium numpy`) and Node 20+. Download `Singapor
 python extract_stations.py     # MRT/LRT station positions       -> data/stations_raw.json
 python build_mrt.py            # stations + links + travel times -> data/stations.json, mrt_edges.json
 python build_shapes.py         # snap links onto real track       -> data/mrt_shapes.json
+python build_land.py           # Singapore land outline (map limits, pin checks) -> frontend/data/sg_land.json
 python export_bikegraph.py     # compact bike graph               -> frontend/data/bg_*.bin
 copy data\stations.json data\mrt_edges.json data\mrt_shapes.json frontend\data\
 node build_matrix.mjs          # station-to-station cycling times -> frontend/data/bike_matrix.json
@@ -58,4 +61,4 @@ Pushing to `main` publishes `frontend/` to GitHub Pages through `.github/workflo
 - Code: [MIT](LICENSE).
 - Map and routing data: © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors, [ODbL](https://opendatacommons.org/licenses/odbl/). The files in `frontend/data/` are derived from it.
 - Address search: [OneMap](https://www.onemap.gov.sg/) (Singapore Land Authority), with Nominatim as fallback.
-- Map tiles: OpenStreetMap, with CARTO as fallback. Map library: [Leaflet](https://leafletjs.com/) (BSD-2-Clause).
+- Map tiles: OpenStreetMap (OpenStreetMap France as fallback); dark mode darkens the same tiles in the browser. Map library: [Leaflet](https://leafletjs.com/) (BSD-2-Clause).

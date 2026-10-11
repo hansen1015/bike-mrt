@@ -1,278 +1,175 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Bike-MRT</title>
+<script>
+  // apply the saved theme before first paint (avoids a light flash in dark mode)
+  try {
+    const t = (JSON.parse(localStorage.getItem('bike-mrt-settings') || '{}')).theme || 'auto';
+    const dark = t === 'dark' || (t === 'auto' && matchMedia('(prefers-color-scheme: dark)').matches);
+    document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+  } catch (e) { document.documentElement.dataset.theme = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'; }
+</script>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230b6e4f'/%3E%3Ccircle cx='32' cy='32' r='21' fill='none' stroke='white' stroke-width='4'/%3E%3Ccircle cx='32' cy='32' r='3.5' fill='white'/%3E%3Cpath d='M32 11v42M11 32h42M17 17l30 30M47 17L17 47' stroke='white' stroke-width='1.2'/%3E%3C/svg%3E">
 <link rel="manifest" href="manifest.webmanifest">
 <meta name="theme-color" content="#0b6e4f">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <link rel="stylesheet" href="lib/leaflet.css">
 <style>
-  :root { --bg:#f6f7f9; --card:#fff; --ink:#1b1f24; --mute:#667085; --line:#e4e7ec; --accent:#0b6e4f; --bike:#0b6e4f; --mrt:#d92d20; }
-  @media (prefers-color-scheme: dark) { :root { --bg:#14171a; --card:#1d2125; --ink:#eceff3; --mute:#98a2b3; --line:#2c3238; --accent:#3ccf91; --bike:#3ccf91; --mrt:#ff6b5e; } }
+  :root { color-scheme:light; --bg:#f6f7f9; --card:#fff; --ink:#1b1f24; --mute:#667085; --line:#e4e7ec; --accent:#0b6e4f; --bike:#0b6e4f; --mrt:#d92d20; --casing:#fff; --on-accent:#fff; --shadow:0 8px 30px rgba(0,0,0,.18); }
+  :root[data-theme="dark"] { color-scheme:dark; --bg:#14171a; --card:#1d2125; --ink:#eceff3; --mute:#98a2b3; --line:#2c3238; --accent:#3ccf91; --bike:#2fb87f; --mrt:#ff6b5e; --casing:#0d1114; --on-accent:#06251a; --shadow:0 8px 30px rgba(0,0,0,.6); }
   * { box-sizing:border-box; }
   body { margin:0; font:15px/1.45 system-ui,sans-serif; background:var(--bg); color:var(--ink); height:100vh; display:grid; grid-template-columns:400px 1fr; }
   #side { overflow-y:auto; padding:16px; border-right:1px solid var(--line); }
-  #map { height:100vh; }
-  h1 { font-size:18px; margin:0 0 12px; }
+  #map { height:100vh; background:var(--bg); }
+  .top { display:flex; align-items:center; gap:8px; margin:0 0 12px; color:var(--accent); }
+  .top h1 { font-size:18px; margin:0; color:var(--ink); flex:1; }
+  .icon { margin:0; width:38px; height:38px; padding:0; background:var(--card); color:var(--ink); border:1px solid var(--line); font-size:18px; border-radius:10px; cursor:pointer; }
   label { display:block; font-size:12px; color:var(--mute); margin:10px 0 3px; }
-  input[type=text], input[type=number] { width:100%; padding:8px 10px; border:1px solid var(--line); border-radius:8px; background:var(--card); color:var(--ink); font:inherit; }
+  input[type=text], input[type=number], select { width:100%; padding:8px 10px; border:1px solid var(--line); border-radius:8px; background:var(--card); color:var(--ink); font:inherit; }
   .field { position:relative; }
-  .sugg { position:absolute; left:0; right:0; top:100%; z-index:1000; background:var(--card); border:1px solid var(--line); border-radius:8px; max-height:220px; overflow:auto; display:none; }
+  .sugg { position:absolute; left:0; right:0; top:100%; z-index:1000; background:var(--card); border:1px solid var(--line); border-radius:8px; max-height:220px; overflow:auto; display:none; box-shadow:var(--shadow); }
   .sugg div { padding:7px 10px; cursor:pointer; font-size:13px; }
   .sugg div:hover { background:var(--bg); }
   .pin { display:flex; gap:6px; }
-  .pinbtn { margin:0; width:42px; padding:0; background:var(--card); border:1px solid var(--line); font-size:18px; }
+  .pinbtn { margin:0; width:42px; padding:0; background:var(--card); border:1px solid var(--line); font-size:18px; flex:none; }
   .pinbtn.on { background:var(--accent); }
   #map.picking { cursor:crosshair; }
-  button { margin-top:14px; width:100%; padding:10px; border:0; border-radius:8px; background:var(--accent); color:#fff; font:600 15px system-ui; cursor:pointer; }
+  button { margin-top:14px; width:100%; padding:10px; border:0; border-radius:8px; background:var(--accent); color:var(--on-accent); font:600 15px system-ui; cursor:pointer; }
   button:disabled { opacity:.6; }
-  details { margin-top:12px; font-size:13px; }
-  .row { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
   .plan { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:12px; margin-top:12px; cursor:pointer; }
   .plan.active { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent); }
   .plan h2 { margin:0; font-size:13px; color:var(--mute); font-weight:600; text-transform:uppercase; letter-spacing:.04em; }
   .big { font-size:28px; font-weight:700; }
-  .split { display:flex; gap:14px; font-size:13px; color:var(--mute); margin:2px 0 8px; }
+  .split { display:flex; gap:14px; font-size:13px; color:var(--mute); margin:2px 0 8px; flex-wrap:wrap; }
   .split b { color:var(--ink); }
   .leg { display:flex; gap:8px; padding:5px 0; border-top:1px solid var(--line); font-size:13px; }
   .tag { flex:none; width:44px; text-align:center; border-radius:5px; color:#fff; font-size:11px; font-weight:700; padding:2px 0; height:fit-content; }
   .tag.bike { background:var(--bike); } .tag.mrt { background:var(--mrt); }
-  .stn-label { font:600 11px system-ui; color:#111; text-shadow:0 0 3px #fff,0 0 3px #fff,0 0 3px #fff; white-space:nowrap; }
   .gm { font-size:12px; color:var(--accent); margin-right:8px; }
   .err { color:var(--mrt); margin-top:10px; }
-  @media (max-width:800px) { body { grid-template-columns:1fr; grid-template-rows:42vh 1fr; grid-template-rows:42dvh 1fr; height:100vh; height:100dvh; } #map { order:-1; height:100%; } #side { border-right:0; border-top:1px solid var(--line); padding:12px; } .big { font-size:24px; } }
+  .hint { font-size:12px; color:var(--mute); margin-top:10px; }
+
+  /* map furniture follows the theme */
+  .stn-label { font:600 11px system-ui; color:var(--ink); text-shadow:0 0 3px var(--casing),0 0 3px var(--casing),0 0 3px var(--casing); white-space:nowrap; }
+  :root[data-theme="dark"] .leaflet-tile-pane { filter:invert(100%) hue-rotate(180deg) brightness(92%) contrast(88%) saturate(85%); }
+  .leaflet-tooltip { background:var(--card); color:var(--ink); border-color:var(--line); }
+  .leaflet-tooltip-right:before { border-right-color:var(--line); } .leaflet-tooltip-left:before { border-left-color:var(--line); }
+  .leaflet-bar a { background:var(--card); color:var(--ink); border-bottom-color:var(--line); }
+  .leaflet-bar a:hover { background:var(--bg); }
+  .leaflet-container .leaflet-control-attribution { background:color-mix(in srgb, var(--card) 80%, transparent); color:var(--mute); }
+  .leaflet-control-attribution a { color:var(--accent); }
+  #toast { position:fixed; left:50%; top:16px; transform:translate(-50%,-80px); background:var(--card); color:var(--ink); border:1px solid var(--mrt); border-radius:10px; padding:10px 14px; box-shadow:var(--shadow); z-index:3000; transition:transform .25s; max-width:90vw; font-size:14px; pointer-events:none; }
+  #toast.show { transform:translate(-50%,0); }
+
+  /* settings sheet */
+  #settings { position:fixed; inset:0; z-index:2500; background:rgba(0,0,0,.45); display:none; align-items:center; justify-content:center; }
+  #settings.open { display:flex; }
+  .sheet { background:var(--bg); color:var(--ink); width:min(560px,100%); max-height:100dvh; max-height:min(100dvh, 760px); overflow-y:auto; border-radius:14px; box-shadow:var(--shadow); padding:0 16px 16px; }
+  .sheet header { position:sticky; top:0; background:var(--bg); display:flex; align-items:center; padding:14px 0 10px; z-index:1; border-bottom:1px solid var(--line); }
+  .sheet header h2 { margin:0; flex:1; font-size:18px; }
+  .sheet section { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:4px 14px 12px; margin-top:14px; }
+  .sheet h3 { margin:12px 0 0; font-size:12px; text-transform:uppercase; letter-spacing:.05em; color:var(--mute); }
+  .opt { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:9px 0; border-top:1px solid var(--line); }
+  .opt:first-of-type { border-top:0; }
+  .opt .t { flex:1; } .opt .t small { display:block; color:var(--mute); font-size:12px; }
+  .opt input[type=number], .opt select { width:92px; flex:none; }
+  .opt input[type=range] { width:140px; flex:none; accent-color:var(--accent); }
+  .opt output { width:42px; text-align:right; font-variant-numeric:tabular-nums; flex:none; }
+  .switch { position:relative; width:44px; height:26px; flex:none; }
+  .switch input { opacity:0; width:100%; height:100%; margin:0; position:absolute; cursor:pointer; z-index:1; }
+  .switch span { position:absolute; inset:0; background:var(--line); border-radius:13px; transition:.15s; }
+  .switch span:after { content:""; position:absolute; left:3px; top:3px; width:20px; height:20px; background:#fff; border-radius:50%; transition:.15s; }
+  .switch input:checked + span { background:var(--accent); }
+  .switch input:checked + span:after { transform:translateX(18px); }
+  .seg { display:flex; border:1px solid var(--line); border-radius:9px; overflow:hidden; flex:none; }
+  .seg button { margin:0; width:auto; padding:6px 12px; border-radius:0; background:var(--card); color:var(--ink); font:500 13px system-ui; }
+  .seg button.on { background:var(--accent); color:var(--on-accent); font-weight:700; }
+  .chips { display:flex; flex-wrap:wrap; gap:6px; padding:8px 0 2px; border-top:1px solid var(--line); }
+  .chips button { margin:0; width:auto; padding:5px 10px; border-radius:16px; background:var(--card); color:var(--ink); border:2px solid var(--c, var(--line)); font:600 12px system-ui; opacity:.45; }
+  .chips button.on { background:var(--c); color:#fff; opacity:1; }
+  .sheet .actions { display:flex; gap:10px; }
+  .sheet .actions button { flex:1; }
+  .sheet .actions .ghost { background:var(--card); color:var(--ink); border:1px solid var(--line); }
+
+  @media (max-width:800px) {
+    body { grid-template-columns:1fr; grid-template-rows:42vh 1fr; grid-template-rows:42dvh 1fr; height:100vh; height:100dvh; }
+    #map { order:-1; height:100%; } #side { border-right:0; border-top:1px solid var(--line); padding:12px; } .big { font-size:24px; }
+    #settings { align-items:stretch; } .sheet { border-radius:0; max-height:100dvh; width:100%; }
+  }
 </style>
 </head>
 <body>
 <div id="side">
-  <h1 style="display:flex;align-items:center;gap:8px;color:var(--accent)"><svg viewBox="0 0 64 64" width="26" height="26" aria-hidden="true"><circle cx="32" cy="32" r="29" fill="none" stroke="currentColor" stroke-width="5"/><circle cx="32" cy="32" r="22" fill="none" stroke="currentColor" stroke-width="1.5"/><line x1="32" y1="32" x2="54.00" y2="32.00" stroke="currentColor" stroke-width="1.2"/><line x1="32" y1="32" x2="52.33" y2="40.42" stroke="currentColor" stroke-width="1.2"/><line x1="32" y1="32" x2="47.56" y2="47.56" stroke="currentColor" stroke-width="1.2"/><line x1="32" y1="32" x2="40.42" y2="52.33" stroke="currentColor" stroke-width="1.2"/><line x1="32" y1="32" x2="32.00" y2="54.00" stroke="currentColor" stroke-width="1.2"/><line x1="32" y1="32" x2="23.58" y2="52.33" stroke="currentColor" stroke-width="1.2"/><line x1="32" y1="32" x2="16.44" y2="47.56" stroke="currentColor" stroke-width="1.2"/><line x1="32" y1="32" x2="11.67" y2="40.42" stroke="currentColor" stroke-width="1.2"/><line x1="32" y1="32" x2="10.00" y2="32.00" stroke="currentColor" stroke-width="1.2"/><line x1="32" y1="32" x2="11.67" y2="23.58" stroke="currentColor" stroke-width="1.2"/><line x1="32" y1="32" x2="16.44" y2="16.44" stroke="currentColor" stroke-width="1.2"/><line x1="32" y1="32" x2="23.58" y2="11.67" stroke="currentColor" stroke-width="1.2"/><line x1="32" y1="32" x2="32.00" y2="10.00" stroke="currentColor" stroke-width="1.2"/><line x1="32" y1="32" x2="40.42" y2="11.67" stroke="currentColor" stroke-width="1.2"/><line x1="32" y1="32" x2="47.56" y2="16.44" stroke="currentColor" stroke-width="1.2"/><line x1="32" y1="32" x2="52.33" y2="23.58" stroke="currentColor" stroke-width="1.2"/><circle cx="32" cy="32" r="4.5" fill="currentColor"/></svg><span style="color:var(--ink)">Bike-MRT</span></h1>
+  <div class="top">
+    <svg viewBox="0 0 64 64" width="26" height="26" aria-hidden="true"><circle cx="32" cy="32" r="29" fill="none" stroke="currentColor" stroke-width="5"/><circle cx="32" cy="32" r="22" fill="none" stroke="currentColor" stroke-width="1.5"/><g stroke="currentColor" stroke-width="1.2"><line x1="32" y1="32" x2="54" y2="32"/><line x1="32" y1="32" x2="52.33" y2="40.42"/><line x1="32" y1="32" x2="47.56" y2="47.56"/><line x1="32" y1="32" x2="40.42" y2="52.33"/><line x1="32" y1="32" x2="32" y2="54"/><line x1="32" y1="32" x2="23.58" y2="52.33"/><line x1="32" y1="32" x2="16.44" y2="47.56"/><line x1="32" y1="32" x2="11.67" y2="40.42"/><line x1="32" y1="32" x2="10" y2="32"/><line x1="32" y1="32" x2="11.67" y2="23.58"/><line x1="32" y1="32" x2="16.44" y2="16.44"/><line x1="32" y1="32" x2="23.58" y2="11.67"/><line x1="32" y1="32" x2="32" y2="10"/><line x1="32" y1="32" x2="40.42" y2="11.67"/><line x1="32" y1="32" x2="47.56" y2="16.44"/><line x1="32" y1="32" x2="52.33" y2="23.58"/></g><circle cx="32" cy="32" r="4.5" fill="currentColor"/></svg>
+    <h1>Bike-MRT</h1>
+    <button class="icon" id="open-settings" title="Settings" aria-label="Settings">⚙️</button>
+  </div>
   <label>From</label>
   <div class="field pin"><input type="text" id="from" value="NTU Binjai Hall"><button class="pinbtn" id="gps-from" title="Use my current location">🎯</button><button class="pinbtn" id="pin-from" title="Pick on map">📍</button><div class="sugg" id="sugg-from"></div></div>
   <label>To</label>
   <div class="field pin"><input type="text" id="to" placeholder="Address, building, postal code, or pick on map"><button class="pinbtn" id="pin-to" title="Pick on map">📍</button><div class="sugg" id="sugg-to"></div></div>
-  <details>
-    <summary>Settings</summary>
-    <div class="row">
-      <div><label>Cycling speed (km/h, max 16)</label><input type="number" id="speed" value="16" min="8" max="16" step="1"></div>
-      <div><label>Fold + wait at start (min)</label><input type="number" id="board" value="4" min="0" step="0.5"></div>
-      <div><label>Unfold at exit (min)</label><input type="number" id="alight" value="2" min="0" step="0.5"></div>
-      <div><label>Line transfer (min)</label><input type="number" id="transfer" value="4" min="0" step="0.5"></div>
-    </div>
-  </details>
-  <label style="display:flex;gap:6px;align-items:center;margin-top:12px"><input type="checkbox" id="showNet" checked> Show MRT/LRT network on map</label>
   <button id="go">Find fastest route</button>
   <div id="out"></div>
 </div>
 <div id="map"></div>
+<div id="toast" role="status"></div>
+
+<div id="settings" aria-modal="true" role="dialog" aria-label="Settings">
+  <div class="sheet">
+    <header><h2>Settings</h2><button class="icon" id="close-settings" aria-label="Close">✕</button></header>
+
+    <section>
+      <h3>Appearance</h3>
+      <div class="opt"><div class="t">Theme<small>Auto follows your device</small></div>
+        <div class="seg" id="theme-seg"><button data-v="auto">Auto</button><button data-v="light">Light</button><button data-v="dark">Dark</button></div></div>
+      <div class="opt"><div class="t">Show MRT/LRT network on map</div><label class="switch"><input type="checkbox" data-key="showNet"><span></span></label></div>
+      <div class="opt"><div class="t">Show station names<small>When zoomed in</small></div><label class="switch"><input type="checkbox" data-key="showLabels"><span></span></label></div>
+    </section>
+
+    <section>
+      <h3>Cycling</h3>
+      <div class="opt"><div class="t">Cycling speed<small>km/h, Brompton average (max 16)</small></div><input type="number" data-key="speed" min="8" max="16" step="1"></div>
+      <div class="opt"><div class="t">Longest single ride<small>Each cycling leg stays under this</small></div>
+        <select data-key="maxRide"><option value="3">3 km</option><option value="5">5 km</option><option value="8">8 km</option><option value="10">10 km</option><option value="12">12 km</option><option value="15">15 km</option></select></div>
+      <div class="opt"><div class="t">Cycle between stations<small>Allow cycle → MRT → cycle → MRT patterns</small></div><label class="switch"><input type="checkbox" data-key="allowMid"><span></span></label></div>
+      <div class="opt"><div class="t">Prefer trains over cycling<small>1 = just fastest, higher = rides less</small></div><input type="range" data-key="bikePen" min="1" max="3" step="0.2"><output data-out="bikePen"></output></div>
+    </section>
+
+    <section>
+      <h3>Trains to use</h3>
+      <div class="chips" id="line-chips">
+        <button data-line="NS" style="--c:#dc241f">North-South</button>
+        <button data-line="EW" style="--c:#009645">East-West</button>
+        <button data-line="NE" style="--c:#9016b2">North East</button>
+        <button data-line="CC" style="--c:#fa9e0d">Circle</button>
+        <button data-line="DT" style="--c:#0354a6">Downtown</button>
+        <button data-line="TE" style="--c:#9d5b25">Thomson-East Coast</button>
+        <button data-line="BP" style="--c:#748477">Bukit Panjang LRT</button>
+        <button data-line="SK" style="--c:#748477">Sengkang LRT</button>
+        <button data-line="PG" style="--c:#748477">Punggol LRT</button>
+      </div>
+      <div class="opt"><div class="t">Fold + wait before boarding<small>Minutes</small></div><input type="number" data-key="board" min="0" max="30" step="0.5"></div>
+      <div class="opt"><div class="t">Unfold after exit<small>Minutes</small></div><input type="number" data-key="alight" min="0" max="30" step="0.5"></div>
+      <div class="opt"><div class="t">Line change<small>Minutes per transfer</small></div><input type="number" data-key="transfer" min="0" max="30" step="0.5"></div>
+      <div class="opt"><div class="t">Avoid transfers<small>Extra minutes per change when ranking plans</small></div><input type="range" data-key="transferPen" min="0" max="10" step="1"><output data-out="transferPen"></output></div>
+      <div class="opt"><div class="t">Peak hours<small>Longer waits: +2 min boarding, +1 min per transfer</small></div><label class="switch"><input type="checkbox" data-key="peak"><span></span></label></div>
+    </section>
+
+    <section>
+      <h3>Results</h3>
+      <div class="opt"><div class="t">Plans to show</div><select data-key="alts"><option value="1">Fastest only</option><option value="2">Top 2</option><option value="3">Up to 3</option></select></div>
+    </section>
+
+    <div class="hint">Changes apply right away and are saved on this device.</div>
+    <div class="actions" style="margin-top:12px"><button class="ghost" id="reset-settings">Reset to defaults</button><button id="done-settings">Done</button></div>
+  </div>
+</div>
+
 <script src="lib/leaflet.js"></script>
-<script type="module">
-import { Router } from './js/router.js';
-import { Planner } from './js/planner.js';
-
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
-
-// ---- on-device data: bike graph + MRT network, loaded once ----
-// the big graph files are published gzipped; decompress in the browser
-const bin = f => fetch('data/' + f + '.gz').then(r => new Response(r.body.pipeThrough(new DecompressionStream('gzip'))).arrayBuffer());
-const json = f => fetch('data/' + f).then(r => r.json());
-const dataReady = Promise.all([bin('bg_nodes.bin'), bin('bg_edges.bin'), bin('bg_geom.bin'),
-  json('stations.json'), json('mrt_edges.json'), json('mrt_shapes.json'), json('bike_matrix.json')]);
-let planner = null;
-const plannerReady = dataReady.then(([n, e, g, st, ed, sh, bm]) => { planner = new Planner(new Router(n, e, g), st, ed, sh, bm); return planner; });
-
-// Singapore address / postal code / building search: OneMap (free), Nominatim as fallback
-async function geocode(q) {
-  try {
-    const r = await (await fetch('https://www.onemap.gov.sg/api/common/elastic/search?returnGeom=Y&getAddrDetails=Y&searchVal=' + encodeURIComponent(q))).json();
-    const res = (r.results || []).slice(0, 8).map(x => ({ label: (x.ADDRESS && x.ADDRESS !== 'NIL' ? x.ADDRESS : x.SEARCHVAL).toLowerCase().replace(/\w/g, c => c.toUpperCase()), lat: +x.LATITUDE, lon: +x.LONGITUDE }));
-    if (res.length) return res;
-  } catch (e) {}
-  const r = await (await fetch('https://nominatim.openstreetmap.org/search?format=json&countrycodes=sg&limit=6&q=' + encodeURIComponent(q))).json();
-  return r.map(x => ({ label: x.display_name, lat: +x.lat, lon: +x.lon }));
-}
-
-const map = L.map('map').setView([1.3521, 103.8198], 12);
-const osmTiles = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap contributors' }).addTo(map);
-// OSM sometimes refuses tile requests coming from inside an app; fall back to CARTO (also OSM-based, free)
-let tileErrors = 0;
-osmTiles.on('tileerror', () => {
-  if (++tileErrors === 8) {
-    map.removeLayer(osmTiles);
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', { maxZoom: 19, subdomains: 'abcd', attribution: '&copy; OpenStreetMap contributors &copy; CARTO' }).addTo(map);
-  }
-});
-const layer = L.layerGroup().addTo(map);
-const picked = { from: { lat: 1.353820, lon: 103.688243 }, to: null };
-const LRT_GREY = '#748477';
-const LINE_COLORS = { NS:'#dc241f', EW:'#009645', CG:'#009645', NE:'#9016b2', CC:'#fa9e0d', DT:'#0354a6', TE:'#9d5b25', BP:LRT_GREY, SE:LRT_GREY, SW:LRT_GREY, PE:LRT_GREY, PW:LRT_GREY };
-const LRT_NAMES = { BP:'Bukit Panjang LRT', SE:'Sengkang LRT', SW:'Sengkang LRT', PE:'Punggol LRT', PW:'Punggol LRT' };
-const isLrt = code => code in LRT_NAMES;
-const lineLabel = code => LRT_NAMES[code] || code;
-const $ = id => document.getElementById(id);
-let plans = [];
-
-function wireSearch(key) {
-  const input = $(key), box = $('sugg-' + key); let timer;
-  input.addEventListener('input', () => {
-    clearTimeout(timer);
-    if (input.value.length < 3) { box.style.display = 'none'; return; }
-    timer = setTimeout(async () => {
-      try {
-        const res = await geocode(input.value);
-        box.innerHTML = '';
-        res.forEach(r => {
-          const d = document.createElement('div'); d.textContent = r.label;
-          d.onclick = () => { input.value = r.label; setPoint(key, r.lat, r.lon, true); box.style.display = 'none'; };
-          box.appendChild(d);
-        });
-        box.style.display = res.length ? 'block' : 'none';
-      } catch (e) {}
-    }, 300);
-  });
-}
-// ---- MRT network overlay ----
-map.createPane('network'); map.getPane('network').style.zIndex = 350;
-map.createPane('route'); map.getPane('route').style.zIndex = 450;
-const netLayer = L.layerGroup().addTo(map), labelLayer = L.layerGroup();
-const codeChip = c => `<span style="background:${LINE_COLORS[c.slice(0, 2)]};color:#fff;border-radius:3px;padding:0 4px;font-size:11px;font-weight:700">${c}</span>`;
-dataReady.then(([, , , stations, edges, shapes]) => {
-  const net = { stations, edges: edges.map((e, i) => ({ ...e, coords: shapes[i] })) };
-  net.edges.forEach(e => {
-    L.polyline(e.coords, { pane: 'network', color: '#fff', weight: 6, opacity: .9, interactive: false }).addTo(netLayer);
-    L.polyline(e.coords, { pane: 'network', color: LINE_COLORS[e.line], weight: isLrt(e.line) ? 2.5 : 3.5, opacity: 1, interactive: false, dashArray: isLrt(e.line) ? '1 0' : null }).addTo(netLayer);
-  });
-  net.stations.forEach(s => {
-    const hub = s.codes.length > 1, lrtOnly = s.codes.every(isLrt);
-    L.circleMarker([s.lat, s.lon], { pane: 'network', radius: hub ? 6 : lrtOnly ? 3 : 4, color: '#222', weight: hub ? 2.5 : 1.5, fillColor: '#fff', fillOpacity: 1 })
-      .bindTooltip(`<b>${s.name}</b><br>${s.codes.map(codeChip).join(' ')}`).addTo(netLayer);
-    L.marker([s.lat, s.lon], { pane: 'network', interactive: false, icon: L.divIcon({ className: 'stn-label', html: s.name, iconSize: [0, 0], iconAnchor: [-8, 6] }) }).addTo(labelLayer);
-  });
-});
-function updateLabels() { if ($('showNet').checked && map.getZoom() >= 14) labelLayer.addTo(map); else map.removeLayer(labelLayer); }
-map.on('zoomend', updateLabels);
-$('showNet').onchange = () => { $('showNet').checked ? netLayer.addTo(map) : map.removeLayer(netLayer); updateLabels(); };
-function dimNetwork(on) { map.getPane('network').style.opacity = on ? 0.3 : 1; }
-
-wireSearch('from'); wireSearch('to');
-
-const markers = {};
-function setPoint(key, lat, lon, pan) {
-  picked[key] = { lat, lon };
-  if (!markers[key]) {
-    markers[key] = L.marker([lat, lon], { draggable: true, title: key === 'from' ? 'Start' : 'Destination',
-      icon: L.divIcon({ className: '', iconSize: [30, 30], iconAnchor: [15, 28],
-        html: `<div style="background:${key === 'from' ? '#0b6e4f' : '#d92d20'};color:#fff;width:30px;height:30px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);display:grid;place-items:center"><b style="transform:rotate(45deg)">${key === 'from' ? 'A' : 'B'}</b></div>` }) }).addTo(map);
-    markers[key].on('dragend', e => { const p = e.target.getLatLng(); setPoint(key, p.lat, p.lng); $(key).value = 'Pin (' + p.lat.toFixed(5) + ', ' + p.lng.toFixed(5) + ')'; });
-  } else markers[key].setLatLng([lat, lon]);
-  if (pan) map.panTo([lat, lon]);
-}
-let picking = null;
-function setPicking(key) {
-  picking = picking === key ? null : key;
-  ['from', 'to'].forEach(k => $('pin-' + k).classList.toggle('on', picking === k));
-  $('map').classList.toggle('picking', !!picking);
-}
-$('pin-from').onclick = () => setPicking('from');
-
-// start from the phone's GPS position
-$('gps-from').onclick = () => {
-  const btn = $('gps-from'), input = $('from');
-  if (!navigator.geolocation) { input.value = ''; input.placeholder = 'GPS is not available on this device'; return; }
-  btn.classList.add('on'); input.placeholder = 'Finding your location…';
-  navigator.geolocation.getCurrentPosition(pos => {
-    btn.classList.remove('on');
-    const { latitude: lat, longitude: lon, accuracy } = pos.coords;
-    if (lat < 1.15 || lat > 1.50 || lon < 103.55 || lon > 104.10) { input.value = ''; input.placeholder = 'You seem to be outside Singapore: pick a start instead'; return; }
-    setPoint('from', lat, lon, true);
-    input.value = 'My location (±' + Math.round(accuracy) + ' m)';
-    map.setView([lat, lon], Math.max(map.getZoom(), 15));
-  }, err => {
-    btn.classList.remove('on');
-    input.value = '';
-    input.placeholder = err.code === 1 ? 'Location permission denied: allow it in your browser settings' : 'Could not get your location, try again or pick on the map';
-  }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000 });
-};
-$('pin-to').onclick = () => setPicking('to');
-map.on('click', e => {
-  // with no button active: first click sets the destination (start is usually Binjai Hall)
-  const key = picking || 'to';
-  setPoint(key, e.latlng.lat, e.latlng.lng);
-  $(key).value = 'Pin (' + e.latlng.lat.toFixed(5) + ', ' + e.latlng.lng.toFixed(5) + ')';
-  if (picking) setPicking(picking);
-});
-setPoint('from', picked.from.lat, picked.from.lon);
-
-$('go').onclick = async () => {
-  const out = $('out');
-  if (!picked.from || !picked.to) { out.innerHTML = '<div class="err">Pick both locations from the suggestion list.</div>'; return; }
-  $('go').disabled = true; out.innerHTML = planner ? '<p>Planning…</p>' : '<p>Loading map data (first time only)…</p>';
-  try {
-    await plannerReady;
-    await new Promise(r => setTimeout(r, 30)); // let the "Planning…" text paint before the CPU-heavy search
-    plans = planner.plan({ lat: picked.from.lat, lon: picked.from.lon }, { lat: picked.to.lat, lon: picked.to.lon },
-      { speed: +$('speed').value, board_min: +$('board').value, alight_min: +$('alight').value, transfer_min: +$('transfer').value });
-    if (!plans.length) throw new Error('No route found');
-    render(); show(0);
-  } catch (e) { out.innerHTML = '<div class="err">' + e.message + '</div>'; }
-  $('go').disabled = false;
-};
-
-const ll = p => p[0].toFixed(6) + ',' + p[1].toFixed(6);
-// Google Maps cycling directions for one leg. `follow` adds waypoints sampled along our route so Google keeps to it.
-function gmaps(l, follow) {
-  const a = l.coords[0] || l.from_pt, b = l.coords[l.coords.length - 1] || l.to_pt;
-  let url = 'https://www.google.com/maps/dir/?api=1&travelmode=bicycling&origin=' + ll(a) + '&destination=' + ll(b);
-  if (follow && l.coords.length > 20) {
-    const n = Math.min(8, Math.floor(l.km * 1.5)), via = [];
-    for (let k = 1; k <= n; k++) via.push(ll(l.coords[Math.round(k * (l.coords.length - 1) / (n + 1))]));
-    if (via.length) url += '&waypoints=' + via.join('%7C');
-  }
-  return url;
-}
-
-const fmt = m => { m = Math.round(m); return m >= 60 ? Math.floor(m / 60) + ' h ' + (m % 60) + ' min' : m + ' min'; };
-
-function render() {
-  $('out').innerHTML = plans.map((p, i) => `
-    <div class="plan" data-i="${i}">
-      <h2>${p.label}</h2>
-      <div class="big">${fmt(p.total_min)}</div>
-      <div class="split"><span>Cycling <b>${p.bike_km} km</b> · ${fmt(p.bike_min)}</span><span>MRT/LRT &amp; transfers <b>${fmt(p.mrt_min)}</b></span></div>
-      ${p.legs.map(l => l.mode === 'bike'
-        ? `<div class="leg"><span class="tag bike">BIKE</span><span>${l.from} → ${l.to}<br><span style="color:var(--mute)">${l.km} km · ${fmt(l.min)}</span><br><a class="gm" href="${gmaps(l, true)}" target="_blank" rel="noopener" title="Google Maps cycling, forced along this route">Open in Google Maps ↗</a> <a class="gm" href="${gmaps(l, false)}" target="_blank" rel="noopener" title="Let Google choose its own cycling route">Google's route ↗</a></span></div>`
-        : `<div class="leg"><span class="tag mrt" style="${l.segments.every(s => isLrt(s.line)) ? 'background:' + LRT_GREY : ''}">${l.segments.every(s => isLrt(s.line)) ? 'LRT' : 'MRT'}</span><span>${l.segments.map(s => `<b>${lineLabel(s.line)}</b> ${s.from} → ${s.to} (${s.stops} stops)`).join('<br>')}<br><span style="color:var(--mute)">${fmt(l.min)} incl. fold &amp; wait</span></span></div>`).join('')}
-    </div>`).join('');
-  document.querySelectorAll('.plan').forEach(el => el.onclick = () => show(+el.dataset.i));
-  document.querySelectorAll('.gm').forEach(a => a.onclick = e => e.stopPropagation());
-}
-
-function show(i) {
-  document.querySelectorAll('.plan').forEach((el, j) => el.classList.toggle('active', i === j));
-  layer.clearLayers(); const pts = [];
-  dimNetwork(true);
-  plans[i].legs.forEach(l => {
-    if (l.mode === 'bike') {
-      L.polyline(l.coords, { pane: 'route', color: '#fff', weight: 9 }).addTo(layer);
-      L.polyline(l.coords, { pane: 'route', color: '#0b6e4f', weight: 5 }).addTo(layer); pts.push(...l.coords);
-    } else {
-      l.segments.forEach(sg => {
-        const col = LINE_COLORS[sg.line];
-        L.polyline(sg.coords, { pane: 'route', color: '#fff', weight: 11 }).addTo(layer);
-        L.polyline(sg.coords, { pane: 'route', color: col, weight: 7 }).addTo(layer);
-        sg.stop_pts.forEach((p, k) => {
-          const end = k === 0 || k === sg.stop_pts.length - 1;
-          L.circleMarker(p, { pane: 'route', radius: end ? 8 : 4.5, color: end ? col : '#222', weight: end ? 4 : 1.5, fillColor: '#fff', fillOpacity: 1 })
-            .bindTooltip(sg.stop_names[k], { permanent: end, direction: 'right', offset: [8, 0] }).addTo(layer);
-        });
-        pts.push(...sg.coords);
-      });
-    }
-  });
-  map.fitBounds(L.latLngBounds(pts), { padding: [40, 40] });
-}
-</script>
+<script type="module" src="js/app.js"></script>
 </body>
 </html>

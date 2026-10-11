@@ -3,7 +3,17 @@
 // Any number of bike <-> MRT alternations is searched.
 import { Router } from "./router.js";
 
-export const DEFAULTS = { speed: 16, board_min: 4, alight_min: 2, transfer_min: 4, cg_transfer_min: 2, max_first_last_km: 15 };
+// Route options (all optional):
+//   speed            cycling speed km/h (<= 16, the graph's cap)
+//   board_min / alight_min / transfer_min   fold+wait, unfold, line-change minutes (counted in the trip time)
+//   transfer_penalty extra minutes per line change used only to rank plans (not shown in the time): "avoid transfers"
+//   max_ride_km      longest single cycling leg allowed (also limits a pure-cycling trip)
+//   allow_mid        allow cycling between stations in the middle of the trip
+//   lines            enabled rail line codes (default all: NS EW CG NE CC DT TE BP SE SW PE PW)
+//   bike_pen         how much the ranking dislikes cycling, 1 = neutral, higher = prefers trains
+//   alternatives     how many plans to return (1-3)
+export const DEFAULTS = { speed: 16, board_min: 4, alight_min: 2, transfer_min: 4, cg_transfer_min: 2, max_first_last_km: 15,
+  transfer_penalty: 0, max_ride_km: 15, allow_mid: true, lines: null, bike_pen: 1, alternatives: 3 };
 const BASE_SPEED = 16;
 
 class Heap { // tiny binary heap of [key, value]
@@ -28,14 +38,16 @@ export class Planner {
     const R = this.router, S = this.stations;
     const so = R.snap(origin.lat, origin.lon), sd = R.snap(dest.lat, dest.lon);
     if (!so || !sd) throw new Error("Start or destination is outside Singapore's bike network");
-    const near = (p) => S.map(s => Router.dist([p.lat, p.lon], [s.lat, s.lon]) / 1000 <= o.max_first_last_km);
+    const reach = Math.min(o.max_first_last_km, o.max_ride_km * 1.05); // straight-line pre-filter; exact km checked below
+    const near = (p) => S.map(s => Router.dist([p.lat, p.lon], [s.lat, s.lon]) / 1000 <= reach);
     const nearO = near(origin), nearD = near(dest);
     const toStations = R.oneToMany(so, this.stationSnaps.map((sn, i) => nearO[i] ? sn : null), false, 150);
     const fromStations = R.oneToMany(sd, this.stationSnaps.map((sn, i) => nearD[i] ? sn : null), true, 150);
     const direct = R.route(so, sd);
 
     const plans = [], seen = new Set();
-    for (const [label, pen] of [["Fastest", 1.0], ["Less cycling", 1.6], ["Least cycling", 2.6]]) {
+    const base = Math.max(1, o.bike_pen);
+    for (const [label, pen] of [["Fastest", base], ["Less cycling", base * 1.6], ["Least cycling", base * 2.6]]) {
       const res = this._dijkstra(o, scale, pen, toStations, fromStations, direct);
       if (!res) continue;
       const sig = JSON.stringify(res.legs.map(l => [l.mode, l.from, l.to, l.segments && l.segments.map(s => s.line + s.from + s.to)]));
@@ -44,35 +56,40 @@ export class Planner {
     }
     plans.sort((a, b) => a.total_min - b.total_min);
     if (plans.length) plans[0].label = "Fastest";
+    plans.length = Math.min(plans.length, Math.max(1, Math.min(3, o.alternatives)));
     plans.forEach(p => this._addGeometry(p, origin, dest, so, sd));
     return plans;
   }
 
   _dijkstra(o, scale, pen, toSt, fromSt, direct) {
     const adj = new Map();
-    const add = (u, v, real, bike, info) => { if (!adj.has(u)) adj.set(u, []); adj.get(u).push({ v, real, bike, info }); };
+    const add = (u, v, real, bike, info, extra = 0) => { if (!adj.has(u)) adj.set(u, []); adj.get(u).push({ v, real, bike, info, extra }); };
+    const on = o.lines ? new Set(o.lines) : null;
+    const lineOn = l => !on || on.has(l);
+    const rideOk = km => km <= o.max_ride_km + 1e-9;
     this.stations.forEach(s => {
-      const lines = this.linesAt[s.id] || new Set();
+      const lines = new Set([...(this.linesAt[s.id] || [])].filter(lineOn));
       for (const line of lines) {
         add("B" + s.id, `T${s.id}:${line}`, o.board_min, false, { mode: "board" });
         add(`T${s.id}:${line}`, "B" + s.id, o.alight_min, false, { mode: "alight" });
         for (const other of lines) if (other !== line) {
           const t = (line === "EW" && other === "CG") || (line === "CG" && other === "EW") ? o.cg_transfer_min : o.transfer_min;
-          add(`T${s.id}:${line}`, `T${s.id}:${other}`, t, false, { mode: "transfer" });
+          add(`T${s.id}:${line}`, `T${s.id}:${other}`, t, false, { mode: "transfer" }, o.transfer_penalty);
         }
       }
     });
     this.mrtEdges.forEach((e, i) => {
+      if (!lineOn(e.line)) return;
       add(`T${e.a}:${e.line}`, `T${e.b}:${e.line}`, e.min, false, { mode: "train", line: e.line, eid: i, rev: false });
       add(`T${e.b}:${e.line}`, `T${e.a}:${e.line}`, e.min, false, { mode: "train", line: e.line, eid: i, rev: true });
     });
-    for (const k in this.matrix) {
+    if (o.allow_mid) for (const k in this.matrix) {
       const [a, b] = k.split(","); const [m, km] = this.matrix[k];
-      add("B" + a, "B" + b, m * scale, true, { mode: "bike", km });
+      if (rideOk(km)) add("B" + a, "B" + b, m * scale, true, { mode: "bike", km });
     }
-    toSt.forEach((r, i) => r && add("O", "B" + i, r.min * scale, true, { mode: "bike", km: r.km }));
-    fromSt.forEach((r, i) => r && add("B" + i, "D", r.min * scale, true, { mode: "bike", km: r.km }));
-    if (direct) add("O", "D", direct.min * scale, true, { mode: "bike", km: direct.km });
+    toSt.forEach((r, i) => r && rideOk(r.km) && add("O", "B" + i, r.min * scale, true, { mode: "bike", km: r.km }));
+    fromSt.forEach((r, i) => r && rideOk(r.km) && add("B" + i, "D", r.min * scale, true, { mode: "bike", km: r.km }));
+    if (direct && rideOk(direct.km)) add("O", "D", direct.min * scale, true, { mode: "bike", km: direct.km });
 
     const dist = new Map([["O", 0]]), prev = new Map(), pq = new Heap();
     pq.push(0, "O");
@@ -81,7 +98,7 @@ export class Planner {
       if (d > dist.get(u)) continue;
       if (u === "D") break;
       for (const a of adj.get(u) || []) {
-        const nd = d + (a.bike ? a.real * pen : a.real);
+        const nd = d + (a.bike ? a.real * pen : a.real) + a.extra;
         if (nd < (dist.has(a.v) ? dist.get(a.v) : Infinity)) { dist.set(a.v, nd); prev.set(a.v, [u, a.real, a.info]); pq.push(nd, a.v); }
       }
     }
