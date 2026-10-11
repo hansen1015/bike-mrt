@@ -1,7 +1,7 @@
 {
   "name": "Bike-MRT",
   "short_name": "Bike-MRT",
-  "description": "Fastest Brompton + MRT/LRT commute planner for Singapore",
+  "description": "Fastest trifold bicycle + MRT/LRT commute planner for Singapore",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

@@ -26,7 +26,8 @@
   #map { height:100vh; background:var(--bg); }
   .top { display:flex; align-items:center; gap:8px; margin:0 0 12px; color:var(--accent); }
   .top h1 { font-size:18px; margin:0; color:var(--ink); flex:1; }
-  .icon { margin:0; width:38px; height:38px; padding:0; background:var(--card); color:var(--ink); border:1px solid var(--line); font-size:18px; border-radius:10px; cursor:pointer; }
+  .icon { margin:0; width:38px; height:38px; padding:0; background:var(--card); color:var(--ink); border:1px solid var(--line); font-size:18px; border-radius:10px; cursor:pointer; display:inline-grid; place-items:center; text-decoration:none; flex:none; }
+  .top { gap:6px; }
   label { display:block; font-size:12px; color:var(--mute); margin:10px 0 3px; }
   input[type=text], input[type=number], select { width:100%; padding:8px 10px; border:1px solid var(--line); border-radius:8px; background:var(--card); color:var(--ink); font:inherit; }
   .field { position:relative; }
@@ -48,7 +49,13 @@
   .leg { display:flex; gap:8px; padding:5px 0; border-top:1px solid var(--line); font-size:13px; }
   .tag { flex:none; width:44px; text-align:center; border-radius:5px; color:#fff; font-size:11px; font-weight:700; padding:2px 0; height:fit-content; }
   .tag.bike { background:var(--bike); } .tag.mrt { background:var(--mrt); }
-  .gm { font-size:12px; color:var(--accent); margin-right:8px; }
+  .gbtn { display:inline-flex; align-items:center; gap:6px; margin-top:7px; padding:7px 12px; border-radius:8px; background:var(--accent); color:var(--on-accent); font:600 13px system-ui; text-decoration:none; }
+  .gbtn:hover { filter:brightness(1.08); }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  .pinbtn.loading { position:relative; color:transparent; pointer-events:none; }
+  .pinbtn.loading::after { content:""; position:absolute; inset:0; margin:auto; width:18px; height:18px; border:3px solid var(--line); border-top-color:var(--accent); border-radius:50%; animation:spin .8s linear infinite; }
+  @media (prefers-reduced-motion: reduce) { .pinbtn.loading::after { animation-duration:2.4s; } }
+  #from.locating { color:var(--mute); font-style:italic; }
   .err { color:var(--mrt); margin-top:10px; }
   .hint { font-size:12px; color:var(--mute); margin-top:10px; }
 
@@ -64,9 +71,24 @@
   #toast { position:fixed; left:50%; top:16px; transform:translate(-50%,-80px); background:var(--card); color:var(--ink); border:1px solid var(--mrt); border-radius:10px; padding:10px 14px; box-shadow:var(--shadow); z-index:3000; transition:transform .25s; max-width:90vw; font-size:14px; pointer-events:none; }
   #toast.show { transform:translate(-50%,0); }
 
+  /* intro screen */
+  .intro { text-align:left; padding-top:max(18px, env(safe-area-inset-top)); padding-bottom:max(16px, env(safe-area-inset-bottom)); }
+  .intro .hero { display:flex; align-items:center; gap:12px; color:var(--accent); }
+  .intro .hero h2 { margin:0; font-size:24px; color:var(--ink); }
+  .intro .hero p { margin:0; color:var(--mute); font-size:14px; }
+  .steps { list-style:none; margin:16px 0 0; padding:0; counter-reset:s; }
+  .steps li { counter-increment:s; display:flex; gap:12px; padding:9px 0; border-top:1px solid var(--line); font-size:14px; }
+  .steps li:first-child { border-top:0; }
+  .steps li::before { content:counter(s); flex:none; width:24px; height:24px; border-radius:50%; background:var(--accent); color:var(--on-accent); font-weight:700; font-size:13px; display:grid; place-items:center; }
+  .install { background:var(--card); border:1px solid var(--accent); border-radius:12px; padding:12px 14px; margin-top:14px; font-size:14px; }
+  .install b { display:block; margin-bottom:2px; }
+  .install button { margin-top:10px; }
+  .fine { font-size:12px; color:var(--mute); margin-top:12px; }
+  .fine a { color:var(--accent); }
+
   /* settings sheet */
-  #settings { position:fixed; inset:0; z-index:2500; background:rgba(0,0,0,.45); display:none; align-items:center; justify-content:center; }
-  #settings.open { display:flex; }
+  #settings, #intro { position:fixed; inset:0; z-index:2500; background:rgba(0,0,0,.45); display:none; align-items:center; justify-content:center; }
+  #settings.open, #intro.open { display:flex; }
   .sheet { background:var(--bg); color:var(--ink); width:min(560px,100%); max-height:100dvh; max-height:min(100dvh, 760px); overflow-y:auto; border-radius:14px; box-shadow:var(--shadow); padding:0 16px 16px; }
   .sheet header { position:sticky; top:0; background:var(--bg); display:flex; align-items:center; padding:14px 0 10px; z-index:1; border-bottom:1px solid var(--line); }
   .sheet header h2 { margin:0; flex:1; font-size:18px; }
@@ -97,7 +119,7 @@
   @media (max-width:800px) {
     body { grid-template-columns:1fr; grid-template-rows:42vh 1fr; grid-template-rows:42dvh 1fr; height:100vh; height:100dvh; }
     #map { order:-1; height:100%; } #side { border-right:0; border-top:1px solid var(--line); padding:12px; } .big { font-size:24px; }
-    #settings { align-items:stretch; } .sheet { border-radius:0; max-height:100dvh; width:100%; }
+    #settings, #intro { align-items:stretch; } .sheet { border-radius:0; max-height:100dvh; width:100%; }
   }
 </style>
 </head>
@@ -106,6 +128,8 @@
   <div class="top">
     <svg viewBox="0 0 64 64" width="26" height="26" aria-hidden="true"><circle cx="32" cy="32" r="29" fill="none" stroke="currentColor" stroke-width="5"/><circle cx="32" cy="32" r="22" fill="none" stroke="currentColor" stroke-width="1.5"/><g stroke="currentColor" stroke-width="1.2"><line x1="32" y1="32" x2="54" y2="32"/><line x1="32" y1="32" x2="52.33" y2="40.42"/><line x1="32" y1="32" x2="47.56" y2="47.56"/><line x1="32" y1="32" x2="40.42" y2="52.33"/><line x1="32" y1="32" x2="32" y2="54"/><line x1="32" y1="32" x2="23.58" y2="52.33"/><line x1="32" y1="32" x2="16.44" y2="47.56"/><line x1="32" y1="32" x2="11.67" y2="40.42"/><line x1="32" y1="32" x2="10" y2="32"/><line x1="32" y1="32" x2="11.67" y2="23.58"/><line x1="32" y1="32" x2="16.44" y2="16.44"/><line x1="32" y1="32" x2="23.58" y2="11.67"/><line x1="32" y1="32" x2="32" y2="10"/><line x1="32" y1="32" x2="40.42" y2="11.67"/><line x1="32" y1="32" x2="47.56" y2="16.44"/><line x1="32" y1="32" x2="52.33" y2="23.58"/></g><circle cx="32" cy="32" r="4.5" fill="currentColor"/></svg>
     <h1>Bike-MRT</h1>
+    <a class="icon" id="feedback" title="Send feedback" aria-label="Send feedback" href="#">✉️</a>
+    <button class="icon" id="open-help" title="How to use" aria-label="How to use">❓</button>
     <button class="icon" id="open-settings" title="Settings" aria-label="Settings">⚙️</button>
   </div>
   <label>From</label>
@@ -118,6 +142,29 @@
 <div id="map"></div>
 <div id="toast" role="status"></div>
 
+<div id="intro" aria-modal="true" role="dialog" aria-label="Welcome to Bike-MRT">
+  <div class="sheet intro">
+    <div class="hero">
+      <svg viewBox="0 0 64 64" width="52" height="52" aria-hidden="true"><circle cx="32" cy="32" r="29" fill="none" stroke="currentColor" stroke-width="5"/><circle cx="32" cy="32" r="22" fill="none" stroke="currentColor" stroke-width="1.5"/><g stroke="currentColor" stroke-width="1.2"><line x1="32" y1="32" x2="54" y2="32"/><line x1="32" y1="32" x2="47.56" y2="47.56"/><line x1="32" y1="32" x2="32" y2="54"/><line x1="32" y1="32" x2="16.44" y2="47.56"/><line x1="32" y1="32" x2="10" y2="32"/><line x1="32" y1="32" x2="16.44" y2="16.44"/><line x1="32" y1="32" x2="32" y2="10"/><line x1="32" y1="32" x2="47.56" y2="16.44"/></g><circle cx="32" cy="32" r="4.5" fill="currentColor"/></svg>
+      <div><h2>Welcome to Bike-MRT</h2><p>Plan the fastest commute with your trifold bicycle and the MRT/LRT in Singapore.</p></div>
+    </div>
+    <ol class="steps">
+      <li><span><b>Choose where from and to.</b> Type an address or postal code, tap 📍 and then the map, or press 🎯 to start from where you are. Pins can be dragged.</span></li>
+      <li><span><b>Tap “Find fastest route”.</b> The app compares cycling the whole way, taking trains, and mixes of both, even cycle → train → cycle → train → cycle.</span></li>
+      <li><span><b>Read the plan.</b> Green <b>BIKE</b> legs are cycling, coloured <b>MRT</b> / <b>LRT</b> legs are trains. Tap a plan to see it on the map.</span></li>
+      <li><span><b>Navigate each ride.</b> Every cycling leg has an <b>Open in Google Maps</b> button for turn-by-turn directions.</span></li>
+      <li><span><b>Make it yours in ⚙️ Settings.</b> Dark mode, which lines to use, riding speed, longest ride, waiting and transfer times.</span></li>
+    </ol>
+    <div class="install" id="install-box" hidden>
+      <b>📲 Add Bike-MRT to your home screen</b>
+      <span id="install-text">One tap to open it, full screen like an app, and it works even with a weak signal.</span>
+      <button id="install-btn" hidden>Add to home screen</button>
+    </div>
+    <p class="fine">Train times are estimates from distances and LTA's published train frequencies, not live timetables, and routes come from OpenStreetMap, so always check the map. Made with Claude, open source on <a href="https://github.com/hansen1015/bike-mrt" target="_blank" rel="noopener">GitHub</a>.</p>
+    <button id="intro-go">Let's go</button>
+  </div>
+</div>
+
 <div id="settings" aria-modal="true" role="dialog" aria-label="Settings">
   <div class="sheet">
     <header><h2>Settings</h2><button class="icon" id="close-settings" aria-label="Close">✕</button></header>
@@ -125,14 +172,14 @@
     <section>
       <h3>Appearance</h3>
       <div class="opt"><div class="t">Theme<small>Auto follows your device</small></div>
-        <div class="seg" id="theme-seg"><button data-v="auto">Auto</button><button data-v="light">Light</button><button data-v="dark">Dark</button></div></div>
+        <div class="seg" data-seg="theme"><button data-v="auto">Auto</button><button data-v="light">Light</button><button data-v="dark">Dark</button></div></div>
       <div class="opt"><div class="t">Show MRT/LRT network on map</div><label class="switch"><input type="checkbox" data-key="showNet"><span></span></label></div>
       <div class="opt"><div class="t">Show station names<small>When zoomed in</small></div><label class="switch"><input type="checkbox" data-key="showLabels"><span></span></label></div>
     </section>
 
     <section>
       <h3>Cycling</h3>
-      <div class="opt"><div class="t">Cycling speed<small>km/h, Brompton average (max 16)</small></div><input type="number" data-key="speed" min="8" max="16" step="1"></div>
+      <div class="opt"><div class="t">Cycling speed<small>km/h, trifold bicycle average (max 16)</small></div><input type="number" data-key="speed" min="8" max="16" step="1"></div>
       <div class="opt"><div class="t">Longest single ride<small>Each cycling leg stays under this</small></div>
         <select data-key="maxRide"><option value="3">3 km</option><option value="5">5 km</option><option value="8">8 km</option><option value="10">10 km</option><option value="12">12 km</option><option value="15">15 km</option></select></div>
       <div class="opt"><div class="t">Cycle between stations<small>Allow cycle → MRT → cycle → MRT patterns</small></div><label class="switch"><input type="checkbox" data-key="allowMid"><span></span></label></div>
@@ -152,11 +199,12 @@
         <button data-line="SK" style="--c:#748477">Sengkang LRT</button>
         <button data-line="PG" style="--c:#748477">Punggol LRT</button>
       </div>
-      <div class="opt"><div class="t">Fold + wait before boarding<small>Minutes</small></div><input type="number" data-key="board" min="0" max="30" step="0.5"></div>
-      <div class="opt"><div class="t">Unfold after exit<small>Minutes</small></div><input type="number" data-key="alight" min="0" max="30" step="0.5"></div>
-      <div class="opt"><div class="t">Line change<small>Minutes per transfer</small></div><input type="number" data-key="transfer" min="0" max="30" step="0.5"></div>
+      <div class="opt"><div class="t">Time of day<small>Peak: trains every 2–3 min. Off-peak: about 5 min. Sets your waiting time</small></div>
+        <div class="seg" data-seg="tod"><button data-v="offpeak">Off-peak</button><button data-v="peak">Peak</button></div></div>
+      <div class="opt"><div class="t">Fold + walk to platform<small>Minutes per boarding, waiting is added on top</small></div><input type="number" data-key="fold" min="0" max="30" step="0.5"></div>
+      <div class="opt"><div class="t">Exit + unfold<small>Minutes after leaving the station</small></div><input type="number" data-key="alight" min="0" max="30" step="0.5"></div>
+      <div class="opt"><div class="t">Extra time per line change<small>On top of the estimated walk + wait, can be negative</small></div><input type="number" data-key="transferAdj" min="-2" max="10" step="0.5"></div>
       <div class="opt"><div class="t">Avoid transfers<small>Extra minutes per change when ranking plans</small></div><input type="range" data-key="transferPen" min="0" max="10" step="1"><output data-out="transferPen"></output></div>
-      <div class="opt"><div class="t">Peak hours<small>Longer waits: +2 min boarding, +1 min per transfer</small></div><label class="switch"><input type="checkbox" data-key="peak"><span></span></label></div>
     </section>
 
     <section>

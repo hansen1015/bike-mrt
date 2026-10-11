@@ -1,4 +1,4 @@
-// On-device Brompton router over the compact graph written by export_bikegraph.py.
+// On-device trifold-bicycle router over the compact graph written by export_bikegraph.py.
 // Pure ES module: works in the browser/WebView and in Node (for precomputing the station matrix).
 
 const LAT0 = 1.1, LON0 = 103.5, CELLS_PER_DEG = 500, GRID_W = 320;

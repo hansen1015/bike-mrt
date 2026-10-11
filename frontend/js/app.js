@@ -10,7 +10,7 @@ const DEFAULT_SETTINGS = {
   theme: 'auto', showNet: true, showLabels: true,
   speed: 16, maxRide: 15, allowMid: true, bikePen: 1,
   lines: ['NS', 'EW', 'NE', 'CC', 'DT', 'TE', 'BP', 'SK', 'PG'],
-  board: 4, alight: 2, transfer: 4, transferPen: 0, peak: false, alts: 3,
+  fold: 2.5, alight: 2, transferAdj: 0, transferPen: 0, tod: 'offpeak', alts: 3,
 };
 // chip key -> actual line codes in the data (the airport branch rides with East-West, each LRT system has two loops)
 const LINE_GROUPS = { NS: ['NS'], EW: ['EW', 'CG'], NE: ['NE'], CC: ['CC'], DT: ['DT'], TE: ['TE'], BP: ['BP'], SK: ['SE', 'SW'], PG: ['PE', 'PW'] };
@@ -129,20 +129,16 @@ map.createPane('network'); map.getPane('network').style.zIndex = 350;
 map.createPane('route'); map.getPane('route').style.zIndex = 450;
 const netLayer = L.layerGroup(), labelLayer = L.layerGroup();
 let railData = null;
-const codeChip = c => `<span style="background:${lineColor(c.slice(0, 2)) || LRT_GREY};color:#fff;border-radius:3px;padding:0 4px;font-size:11px;font-weight:700">${c}</span>`;
 function drawNetwork() {
   netLayer.clearLayers(); labelLayer.clearLayers();
   if (!railData) return;
-  const casing = css('--casing'), dot = isDark() ? '#e8ecef' : '#222', fill = isDark() ? '#1d2125' : '#fff';
+  const casing = css('--casing');
   railData.edges.forEach(e => {
     L.polyline(e.coords, { pane: 'network', color: casing, weight: 6, opacity: .9, interactive: false }).addTo(netLayer);
     L.polyline(e.coords, { pane: 'network', color: lineColor(e.line), weight: isLrt(e.line) ? 2.5 : 3.5, opacity: 1, interactive: false }).addTo(netLayer);
   });
-  railData.stations.forEach(s => {
-    const hub = s.codes.length > 1, lrtOnly = s.codes.every(isLrt);
-    L.circleMarker([s.lat, s.lon], { pane: 'network', radius: hub ? 6 : lrtOnly ? 3 : 4, color: dot, weight: hub ? 2.5 : 1.5, fillColor: fill, fillOpacity: 1 })
-      .bindTooltip(`<b>${s.name}</b><br>${s.codes.map(codeChip).join(' ')}`).addTo(netLayer);
-    L.marker([s.lat, s.lon], { pane: 'network', interactive: false, icon: L.divIcon({ className: 'stn-label', html: s.name, iconSize: [0, 0], iconAnchor: [-8, 6] }) }).addTo(labelLayer);
+  railData.stations.forEach(s => { // station names only (no dots), shown when zoomed in
+    L.marker([s.lat, s.lon], { pane: 'network', interactive: false, icon: L.divIcon({ className: 'stn-label', html: s.name, iconSize: [0, 0], iconAnchor: [-5, 6] }) }).addTo(labelLayer);
   });
   updateNetworkVisibility();
 }
@@ -196,21 +192,26 @@ map.on('click', e => {
 });
 setPoint('from', picked.from.lat, picked.from.lon);
 
-// start from the phone's GPS position
+// start from the phone's GPS position, with a spinner on the button while we wait
+let locating = false;
 $('gps-from').onclick = () => {
   const btn = $('gps-from'), input = $('from');
+  if (locating) return;
   if (!navigator.geolocation) { toast('GPS is not available on this device'); return; }
-  btn.classList.add('on'); input.placeholder = 'Finding your location…';
+  const before = input.value;
+  const done = () => { locating = false; btn.classList.remove('loading'); btn.removeAttribute('aria-busy'); btn.disabled = false; input.classList.remove('locating'); };
+  locating = true; btn.classList.add('loading'); btn.setAttribute('aria-busy', 'true'); btn.disabled = true;
+  input.value = 'Finding your location…'; input.classList.add('locating');
   navigator.geolocation.getCurrentPosition(pos => {
-    btn.classList.remove('on');
+    done();
     const { latitude: lat, longitude: lon, accuracy } = pos.coords;
-    if (!setPoint('from', lat, lon, true)) { toast("You seem to be outside Singapore, so pick a start on the map instead"); return; }
+    if (!setPoint('from', lat, lon, true)) { input.value = before; toast('You seem to be outside Singapore, so pick a start on the map instead'); return; }
     input.value = 'My location (±' + Math.round(accuracy) + ' m)';
     map.setView([lat, lon], Math.max(map.getZoom(), 15));
   }, err => {
-    btn.classList.remove('on');
+    done(); input.value = before;
     toast(err.code === 1 ? 'Location permission denied: allow it in your browser settings' : 'Could not get your location, try again or pick on the map');
-  }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000 });
+  }, { enableHighAccuracy: true, timeout: 20000, maximumAge: 10000 });
 };
 
 function wireSearch(key) {
@@ -238,9 +239,10 @@ wireSearch('from'); wireSearch('to');
 let plans = [], activePlan = 0, replanTimer;
 const planOptions = () => ({
   speed: settings.speed,
-  board_min: settings.board + (settings.peak ? 2 : 0),
+  fold_min: settings.fold,
   alight_min: settings.alight,
-  transfer_min: settings.transfer + (settings.peak ? 1 : 0),
+  transfer_adj: settings.transferAdj,
+  peak: settings.tod === 'peak',
   transfer_penalty: settings.transferPen,
   max_ride_km: settings.maxRide,
   allow_mid: settings.allowMid,
@@ -266,16 +268,10 @@ $('go').onclick = runPlan;
 const replanSoon = () => { if (plans.length) { clearTimeout(replanTimer); replanTimer = setTimeout(runPlan, 350); } };
 
 const ll = p => p[0].toFixed(6) + ',' + p[1].toFixed(6);
-// Google Maps cycling directions for one leg. `follow` adds waypoints sampled along our route so Google keeps to it.
-function gmaps(l, follow) {
+// Google Maps cycling directions from the start to the end of one cycling leg (Google picks its own route)
+function gmaps(l) {
   const a = l.coords[0] || l.from_pt, b = l.coords[l.coords.length - 1] || l.to_pt;
-  let url = 'https://www.google.com/maps/dir/?api=1&travelmode=bicycling&origin=' + ll(a) + '&destination=' + ll(b);
-  if (follow && l.coords.length > 20) {
-    const n = Math.min(8, Math.floor(l.km * 1.5)), via = [];
-    for (let k = 1; k <= n; k++) via.push(ll(l.coords[Math.round(k * (l.coords.length - 1) / (n + 1))]));
-    if (via.length) url += '&waypoints=' + via.join('%7C');
-  }
-  return url;
+  return 'https://www.google.com/maps/dir/?api=1&travelmode=bicycling&origin=' + ll(a) + '&destination=' + ll(b);
 }
 
 const fmt = m => { m = Math.round(m); return m >= 60 ? Math.floor(m / 60) + ' h ' + (m % 60) + ' min' : m + ' min'; };
@@ -287,11 +283,11 @@ function render() {
       <div class="big">${fmt(p.total_min)}</div>
       <div class="split"><span>Cycling <b>${p.bike_km} km</b> · ${fmt(p.bike_min)}</span><span>MRT/LRT &amp; transfers <b>${fmt(p.mrt_min)}</b></span></div>
       ${p.legs.map(l => l.mode === 'bike'
-        ? `<div class="leg"><span class="tag bike">BIKE</span><span>${l.from} → ${l.to}<br><span style="color:var(--mute)">${l.km} km · ${fmt(l.min)}</span><br><a class="gm" href="${gmaps(l, true)}" target="_blank" rel="noopener" title="Google Maps cycling, forced along this route">Open in Google Maps ↗</a> <a class="gm" href="${gmaps(l, false)}" target="_blank" rel="noopener" title="Let Google choose its own cycling route">Google's route ↗</a></span></div>`
+        ? `<div class="leg"><span class="tag bike">BIKE</span><span>${l.from} → ${l.to}<br><span style="color:var(--mute)">${l.km} km · ${fmt(l.min)}</span><br><a class="gbtn" href="${gmaps(l)}" target="_blank" rel="noopener">🗺️ Open in Google Maps</a></span></div>`
         : `<div class="leg"><span class="tag mrt" style="${l.segments.every(s => isLrt(s.line)) ? 'background:' + LRT_GREY : ''}">${l.segments.every(s => isLrt(s.line)) ? 'LRT' : 'MRT'}</span><span>${l.segments.map(s => `<b>${lineLabel(s.line)}</b> ${s.from} → ${s.to} (${s.stops} stops)`).join('<br>')}<br><span style="color:var(--mute)">${fmt(l.min)} incl. fold &amp; wait</span></span></div>`).join('')}
     </div>`).join('');
   document.querySelectorAll('.plan').forEach(el => el.onclick = () => show(+el.dataset.i));
-  document.querySelectorAll('.gm').forEach(a => a.onclick = e => e.stopPropagation());
+  document.querySelectorAll('.gbtn').forEach(a => a.onclick = e => e.stopPropagation());
 }
 
 function show(i) {
@@ -338,7 +334,7 @@ function syncSettingsUI() {
     const out = document.querySelector(`[data-out="${el.dataset.key}"]`);
     if (out) out.textContent = el.dataset.key === 'bikePen' ? (+v).toFixed(1) + '×' : v + ' min';
   });
-  document.querySelectorAll('#theme-seg button').forEach(b => b.classList.toggle('on', b.dataset.v === settings.theme));
+  document.querySelectorAll('[data-seg]').forEach(g => g.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.v === settings[g.dataset.seg])));
   document.querySelectorAll('#line-chips button').forEach(b => b.classList.toggle('on', settings.lines.includes(b.dataset.line)));
 }
 
@@ -354,7 +350,10 @@ document.querySelectorAll('[data-key]').forEach(el => {
   };
   el.addEventListener(el.type === 'range' ? 'input' : 'change', apply);
 });
-document.querySelectorAll('#theme-seg button').forEach(b => b.onclick = () => { settings.theme = b.dataset.v; saveSettings(); syncSettingsUI(); applyTheme(); });
+document.querySelectorAll('[data-seg]').forEach(g => g.querySelectorAll('button').forEach(b => b.onclick = () => {
+  settings[g.dataset.seg] = b.dataset.v; saveSettings(); syncSettingsUI();
+  if (g.dataset.seg === 'theme') applyTheme(); else replanSoon();
+}));
 document.querySelectorAll('#line-chips button').forEach(b => b.onclick = () => {
   const s = new Set(settings.lines); s.has(b.dataset.line) ? s.delete(b.dataset.line) : s.add(b.dataset.line);
   settings.lines = [...s]; saveSettings(); syncSettingsUI(); replanSoon();
@@ -363,3 +362,47 @@ $('reset-settings').onclick = () => { settings = { ...DEFAULT_SETTINGS, lines: [
 
 syncSettingsUI();
 applyTheme();
+
+// ================= feedback e-mail =================
+// assembled here (not written in the HTML) so it is not sitting in the page for address scrapers
+(() => {
+  const to = ['hansen.khornelius', 'gmail.com'].join('@');
+  const a = $('feedback');
+  a.href = 'mailto:' + to + '?subject=' + encodeURIComponent('Bike-MRT feedback') + '&body=' + encodeURIComponent('Hi,\n\nMy feedback on Bike-MRT:\n\n\n');
+  a.addEventListener('click', () => toast('Opening your email app… no mail app? Write to ' + to));
+})();
+
+// ================= intro screen + "add to home screen" =================
+const INTRO_KEY = 'bike-mrt-intro-seen';
+const intro = $('intro');
+const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+let installEvent = null;
+
+function updateInstallBox() {
+  const box = $('install-box'), btn = $('install-btn');
+  if (standalone) { box.hidden = true; return; }              // already installed
+  if (installEvent) {                                          // Chrome / Edge / Samsung Internet: one-tap install
+    box.hidden = false; btn.hidden = false;
+  } else if (isIOS) {                                          // iPhone / iPad Safari has no install event, show the steps
+    box.hidden = false; btn.hidden = true;
+    $('install-text').innerHTML = 'On iPhone or iPad: tap the <b style="display:inline">Share</b> button (the square with an arrow) in Safari, then choose <b style="display:inline">Add to Home Screen</b>.';
+  } else box.hidden = true;                                    // not supported here
+}
+window.addEventListener('beforeinstallprompt', e => { installEvent = e; updateInstallBox(); }); // the browser's own prompt still appears as usual
+window.addEventListener('appinstalled', () => { installEvent = null; $('install-box').hidden = true; toast('Bike-MRT was added to your home screen'); });
+$('install-btn').onclick = async () => {
+  if (!installEvent) return;
+  installEvent.prompt();
+  try { await installEvent.userChoice; } catch (e) {}
+  installEvent = null; updateInstallBox();
+};
+
+function openIntro() { updateInstallBox(); intro.classList.add('open'); }
+function closeIntro() { intro.classList.remove('open'); try { localStorage.setItem(INTRO_KEY, '1'); } catch (e) {} }
+$('open-help').onclick = openIntro;
+$('intro-go').onclick = closeIntro;
+intro.addEventListener('click', e => { if (e.target === intro) closeIntro(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeIntro(); });
+let seen = false; try { seen = localStorage.getItem(INTRO_KEY) === '1'; } catch (e) {}
+if (!seen) openIntro();

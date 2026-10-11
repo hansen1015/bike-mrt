@@ -1,19 +1,39 @@
-// Multimodal Brompton + MRT planner (JS port of backend/planner.py).
+// Multimodal trifold bicycle + MRT/LRT planner.
 // State graph: B:<s> = at station s with bike unfolded, T:<s>:<line> = inside the system on `line`.
 // Any number of bike <-> MRT alternations is searched.
 import { Router } from "./router.js";
 
 // Route options (all optional):
 //   speed            cycling speed km/h (<= 16, the graph's cap)
-//   board_min / alight_min / transfer_min   fold+wait, unfold, line-change minutes (counted in the trip time)
+//   fold_min         folding the bike + gantry + walking to the platform, per boarding (waiting is added from headways)
+//   alight_min       exit + unfold after leaving the system
+//   transfer_adj     extra (or fewer) minutes added to every line change
+//   peak             true = peak-hour headways, false = off-peak headways
 //   transfer_penalty extra minutes per line change used only to rank plans (not shown in the time): "avoid transfers"
 //   max_ride_km      longest single cycling leg allowed (also limits a pure-cycling trip)
 //   allow_mid        allow cycling between stations in the middle of the trip
 //   lines            enabled rail line codes (default all: NS EW CG NE CC DT TE BP SE SW PE PW)
 //   bike_pen         how much the ranking dislikes cycling, 1 = neutral, higher = prefers trains
 //   alternatives     how many plans to return (1-3)
-export const DEFAULTS = { speed: 16, board_min: 4, alight_min: 2, transfer_min: 4, cg_transfer_min: 2, max_first_last_km: 15,
+export const DEFAULTS = { speed: 16, fold_min: 2.5, alight_min: 2, transfer_adj: 0, peak: false, max_first_last_km: 15,
   transfer_penalty: 0, max_ride_km: 15, allow_mid: true, lines: null, bike_pen: 1, alternatives: 3 };
+
+// Waiting time = half the gap between trains (you arrive at a random moment). Gaps are LTA's published figures:
+// 2-3 min at peak and about 5 min off-peak on the MRT, Thomson-East Coast Line 5 / 6 min, LRT about 3 / 6 min.
+const LRT_CODES = new Set(['BP', 'SE', 'SW', 'PE', 'PW']);
+const HEADWAY = { mrt: [2.5, 5], te: [5, 6], lrt: [3, 6] }; // [peak, off-peak] minutes
+const headway = (line, peak) => HEADWAY[LRT_CODES.has(line) ? 'lrt' : line === 'TE' ? 'te' : 'mrt'][peak ? 0 : 1];
+
+// Walking time (minutes) for changing line inside one station. Default 3 min (platform change with stairs/escalators).
+// Exceptions: cross-platform interchanges (step across the platform) and stations where the transfer is a longer walk.
+const TRANSFER_WALK_DEFAULT = 3;
+const TRANSFER_WALK = {
+  'City Hall': { 'EW|NS': 1 }, 'Raffles Place': { 'EW|NS': 1 }, 'Jurong East': { 'EW|NS': 1 }, 'Tanah Merah': { 'CG|EW': 1 },
+  'Tampines': { 'DT|EW': 6.5 },        // ~300 m linkway, exit and re-enter within the free-transfer window
+  'Newton': { 'DT|NS': 4 },            // 56 m linkway outside the gantry
+  'Bukit Panjang': { 'BP|DT': 4 },     // LRT station ~200 m from the Downtown Line station
+};
+const transferWalk = (station, a, b) => (TRANSFER_WALK[station] || {})[[a, b].sort().join('|')] ?? TRANSFER_WALK_DEFAULT;
 const BASE_SPEED = 16;
 
 class Heap { // tiny binary heap of [key, value]
@@ -70,10 +90,10 @@ export class Planner {
     this.stations.forEach(s => {
       const lines = new Set([...(this.linesAt[s.id] || [])].filter(lineOn));
       for (const line of lines) {
-        add("B" + s.id, `T${s.id}:${line}`, o.board_min, false, { mode: "board" });
+        add("B" + s.id, `T${s.id}:${line}`, o.fold_min + headway(line, o.peak) / 2, false, { mode: "board" });
         add(`T${s.id}:${line}`, "B" + s.id, o.alight_min, false, { mode: "alight" });
         for (const other of lines) if (other !== line) {
-          const t = (line === "EW" && other === "CG") || (line === "CG" && other === "EW") ? o.cg_transfer_min : o.transfer_min;
+          const t = Math.max(0.5, transferWalk(s.name, line, other) + headway(other, o.peak) / 2 + o.transfer_adj);
           add(`T${s.id}:${line}`, `T${s.id}:${other}`, t, false, { mode: "transfer" }, o.transfer_penalty);
         }
       }

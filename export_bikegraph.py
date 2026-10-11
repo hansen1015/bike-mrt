@@ -1,4 +1,4 @@
-"""Export a compact Brompton-rideable road graph from the Singapore OSM extract for the on-device JS router.
+"""Export a compact trifold-bicycle-rideable road graph from the Singapore OSM extract for the on-device JS router.
 
 Output (frontend/data/):
   bg_nodes.bin  Int32 [lat1e6, lon1e6] per node
@@ -12,7 +12,7 @@ import numpy as np
 import osmium
 
 OUT = "frontend/data/"
-MAX_SPEED = 16  # Brompton cap, same as the GraphHopper profile
+MAX_SPEED = 16  # trifold-bicycle speed cap (km/h)
 
 ROAD = {  # highway -> (speed km/h, cost multiplier)
     "trunk": (14, 4.0), "trunk_link": (14, 4.0), "primary": (15, 1.6), "primary_link": (15, 1.6),

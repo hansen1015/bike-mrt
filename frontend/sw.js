@@ -1,6 +1,6 @@
 // Bike-MRT service worker: makes the app installable and lets it open without signal.
 // Bump VERSION whenever the files in data/ change so phones re-download them.
-const VERSION = 'v3';
+const VERSION = 'v4';
 const CACHE = 'bike-mrt-' + VERSION;
 const SHELL = ['./', 'index.html', 'manifest.webmanifest', 'js/app.js', 'js/router.js', 'js/planner.js', 'lib/leaflet.js', 'lib/leaflet.css',
   'icons/icon-192.png', 'icons/icon-512.png',
