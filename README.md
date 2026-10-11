@@ -7,7 +7,10 @@ Fastest door-to-door commute planner for a **trifold bicycle + MRT/LRT** in Sing
 - the MRT/LRT lines, stations and transfers,
 - an *Open in Google Maps* button for each cycling leg (start to end, Google picks its own cycling route),
 - an **intro screen** explaining how to use the app, with an "add to home screen" prompt where the browser supports it,
-- a **settings page**: light / dark / auto theme (dark mode also darkens the map), cycling speed, longest single ride, cycling between stations on/off, "prefer trains over cycling", pick which MRT/LRT lines to use, peak / off-peak waiting times, fold and unfold times, extra time per line change, avoid-transfers, number of plans (saved on your device),
+- **search by building, business or station name** (merges MRT/LRT stations, [OneMap](https://www.onemap.gov.sg/) for buildings, landmarks and postal codes, and [Photon](https://photon.komoot.io/) for OpenStreetMap shops, cafes, clinics and other businesses), with a clear button and keyboard support,
+- **estimated MRT/LRT fares** per train ride and per plan (adult, student or senior/disability card fares),
+- a button to reset the map view,
+- a **settings page**: light / dark / auto theme (dark mode also darkens the map), cycling speed, longest single ride, cycling between stations on/off, "prefer trains over cycling", pick which MRT/LRT lines to use, a departure time (peak or off-peak is worked out from the time and day), fold and unfold times, extra time per line change, avoid-transfers, number of plans (saved on your device),
 - a feedback button (opens an email),
 - a map limited to Singapore, with pins and GPS accepted only on Singapore land,
 - start from your **GPS location** (the 🎯 button), a searched address, or a pin dropped on the map.
@@ -47,6 +50,12 @@ python compress_data.py        # gzip the graph for publishing
 
 Bump `VERSION` in `frontend/sw.js` after changing data so installed apps refresh their cache.
 
+## Tests
+
+```
+node tests/fares.test.mjs     # fare bands, early-bird discount, 2026 fare review, peak detection
+```
+
 ## Deploy
 
 Pushing to `main` publishes `frontend/` to GitHub Pages through `.github/workflows/pages.yml`.
@@ -56,9 +65,13 @@ Pushing to `main` publishes `frontend/` to GitHub Pages through `.github/workflo
 There is no public timetable or transfer-time dataset for the MRT/LRT, so the app builds estimates from what *is* published:
 
 - **Ride time between stops:** straight-line distance between stations (from OpenStreetMap) at an average train speed plus a short stop time. MRT: 55 km/h and 0.5 min per stop; LRT: 28 km/h with a winding-track factor. Checked against known end-to-end times (East-West Line about 79 min).
-- **Waiting for a train:** half the gap between trains, using LTA's published frequencies: [2-3 min at peak and about 5 min off-peak, Thomson-East Coast Line 5 and 6 min](https://lta.gov.sg/content/ltagov/en/newsroom/2024/9/media-replies/public-transport---keeping-it-convenient--affordable.html). LRT is assumed at 3 / 6 min. Pick *Peak* or *Off-peak* in Settings.
+- **Waiting for a train:** half the gap between trains, using LTA's published frequencies: [2-3 min at peak and about 5 min off-peak, Thomson-East Coast Line 5 and 6 min](https://lta.gov.sg/content/ltagov/en/newsroom/2024/9/media-replies/public-transport---keeping-it-convenient--affordable.html). LRT is assumed at 3 / 6 min. Peak is worked out from the departure time (now, or one you pick, in Singapore time): weekdays 7-9 am and 5-7 pm. Public holidays are not known to the app.
 - **Changing lines:** walking time plus the wait for the next train on the new line. Walking defaults to 3 min. [City Hall](https://landtransportguru.net/city-hall-station/), Raffles Place, Jurong East and Tanah Merah (Changi Airport branch) are cross-platform (1 min). Tampines (about 300 m linkway, 6.5 min) and [Newton](https://landtransportguru.net/newton-station/) (56 m linkway, 4 min) take longer, and the LRT at Bukit Panjang is about 200 m from the Downtown Line (4 min). These are estimates, and you can add or remove minutes per change in Settings.
 - **Boarding:** folding the bike, the gates and walking to the platform (2.5 min by default) plus the wait for the train. Leaving the system costs 2 min to exit and unfold.
+
+## Fares
+
+Fares come from LTA's [MRT/LRT fare tables](https://sbstransit.com.sg/fares-and-concessions) (effective 27 Dec 2025): adult, student and senior/disability card fares by distance, with the weekday before-7:45-am discount. The app switches automatically to the [2026 fare review](https://mothership.sg/2026/09/fare-adjustment-2026/) fares from 26 Dec 2026 (adult +12 / +13 cents, concession +5 cents). The distance is the estimated track length, so a fare can be one band (about 5-10 cents) off. Every train ride is priced as its own journey, because cycling in between breaks the trip. Workfare, cash fares and bus fares are not included.
 
 ## Limitations
 

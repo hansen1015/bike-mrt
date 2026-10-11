@@ -1,5 +1,7 @@
 import { Router } from './router.js';
 import { Planner } from './planner.js';
+import { railFare, sgClock, timeInfo, polyKm, FARE_TYPES } from './fares.js';
+import { searchPlaces } from './search.js';
 
 const $ = id => document.getElementById(id);
 const L = window.L;
@@ -10,7 +12,7 @@ const DEFAULT_SETTINGS = {
   theme: 'auto', showNet: true, showLabels: true,
   speed: 16, maxRide: 15, allowMid: true, bikePen: 1,
   lines: ['NS', 'EW', 'NE', 'CC', 'DT', 'TE', 'BP', 'SK', 'PG'],
-  fold: 2.5, alight: 2, transferAdj: 0, transferPen: 0, tod: 'offpeak', alts: 3,
+  fold: 2.5, alight: 2, transferAdj: 0, transferPen: 0, depart: 'now', showFares: true, fareType: 'adult', alts: 3,
 };
 // chip key -> actual line codes in the data (the airport branch rides with East-West, each LRT system has two loops)
 const LINE_GROUPS = { NS: ['NS'], EW: ['EW', 'CG'], NE: ['NE'], CC: ['CC'], DT: ['DT'], TE: ['TE'], BP: ['BP'], SK: ['SE', 'SW'], PG: ['PE', 'PW'] };
@@ -46,6 +48,26 @@ const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).
 
 const map = L.map('map', { zoomSnap: 1, worldCopyJump: false }).setView([1.3521, 103.8198], 12);
 window.__bikeMrtMap = map; // handy for debugging in the console
+
+// "reset view" button under the zoom buttons: back to the current route, or the whole of Singapore
+const ResetView = L.Control.extend({
+  options: { position: 'topleft' },
+  onAdd() {
+    const bar = L.DomUtil.create('div', 'leaflet-bar');
+    const a = L.DomUtil.create('a', 'reset-view', bar);
+    a.href = '#'; a.title = 'Reset map view'; a.setAttribute('role', 'button'); a.setAttribute('aria-label', 'Reset map view'); a.textContent = '⤢';
+    L.DomEvent.on(a, 'click', e => { L.DomEvent.stop(e); resetView(); });
+    L.DomEvent.disableClickPropagation(bar);
+    return bar;
+  },
+});
+let sgBounds = null;
+function resetView() {
+  if (plans.length && routeBounds) map.fitBounds(routeBounds, { padding: [40, 40] });
+  else if (sgBounds) map.fitBounds(sgBounds);
+  else map.setView([1.3521, 103.8198], 12);
+}
+new ResetView().addTo(map);
 
 const ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
 // One free, key-less tile source. Dark mode darkens these same tiles with a CSS filter (see index.html).
@@ -96,6 +118,7 @@ function onLand(lat, lon) { // inside Singapore's outline, or within 250 m of th
 }
 landReady.then(rings => {
   land = rings.map(ring => ({ ring, minLat: Math.min(...ring.map(p => p[0])), maxLat: Math.max(...ring.map(p => p[0])), minLon: Math.min(...ring.map(p => p[1])), maxLon: Math.max(...ring.map(p => p[1])) }));
+  sgBounds = L.latLngBounds(land[0].ring); // the main island is the first (largest) ring
   const pad = 0.04;
   const bounds = L.latLngBounds([Math.min(...land.map(p => p.minLat)) - pad, Math.min(...land.map(p => p.minLon)) - pad],
                                 [Math.max(...land.map(p => p.maxLat)) + pad, Math.max(...land.map(p => p.maxLon)) + pad]);
@@ -214,35 +237,89 @@ $('gps-from').onclick = () => {
   }, { enableHighAccuracy: true, timeout: 20000, maximumAge: 10000 });
 };
 
+// ---- place search: stations + OneMap buildings + OpenStreetMap businesses, with keyboard support ----
+const searchCache = new Map();
+function clearPoint(key) {
+  if (markers[key]) { markers[key].remove(); delete markers[key]; }
+  picked[key] = null; lastGood[key] = null;
+}
 function wireSearch(key) {
-  const input = $(key), box = $('sugg-' + key); let timer;
+  const input = $(key), box = $('sugg-' + key), wrap = input.parentElement;
+  let timer, ctrl, items = [], active = -1, token = 0;
+  const hide = () => { box.style.display = 'none'; active = -1; };
+  const setActive = i => { active = i; [...box.querySelectorAll('.it')].forEach((el, j) => { el.classList.toggle('act', j === i); if (j === i) el.scrollIntoView({ block: 'nearest' }); }); };
+  const choose = r => {
+    input.value = r.title; hide();
+    if (!setPoint(key, r.lat, r.lon, true)) input.value = '';
+  };
+  const show = (list, msg) => {
+    items = list; active = -1; box.innerHTML = '';
+    if (!list.length) { const m = document.createElement('div'); m.className = 'msg'; m.textContent = msg; box.appendChild(m); }
+    list.forEach(r => {
+      const d = document.createElement('div'); d.className = 'it';
+      d.innerHTML = '<span class="ic"></span><span><div class="tt"></div><div class="ss"></div></span>';
+      d.querySelector('.ic').textContent = r.icon; d.querySelector('.tt').textContent = r.title; d.querySelector('.ss').textContent = r.sub;
+      d.addEventListener('mousedown', e => { e.preventDefault(); choose(r); }); // mousedown so the input keeps focus until we choose
+      box.appendChild(d);
+    });
+    box.style.display = 'block';
+  };
+  async function run(q) {
+    if (ctrl) ctrl.abort();
+    const key2 = q.toLowerCase();
+    if (searchCache.has(key2)) { show(searchCache.get(key2), 'No matches.'); return; }
+    ctrl = new AbortController(); const my = ++token;
+    wrap.classList.add('busy');
+    try {
+      const c = map.getCenter();
+      const { results, failed, aborted } = await searchPlaces(q, { center: { lat: c.lat, lon: c.lng }, stations: railData ? railData.stations : [], signal: ctrl.signal });
+      if (aborted || my !== token) return;
+      const list = results.filter(r => onLand(r.lat, r.lon));
+      if (!failed) searchCache.set(key2, list);
+      show(list, failed ? 'Search is unavailable right now. Check your connection, or drop a pin on the map.' : 'No matches. Try a building, business, postal code or MRT station.');
+    } catch (e) { if (my === token) show([], 'Search is unavailable right now. Check your connection, or drop a pin on the map.'); }
+    finally { if (my === token) wrap.classList.remove('busy'); }
+  }
   input.addEventListener('input', () => {
     clearTimeout(timer);
-    if (input.value.length < 3) { box.style.display = 'none'; return; }
-    timer = setTimeout(async () => {
-      try {
-        const res = (await geocode(input.value)).filter(r => onLand(r.lat, r.lon));
-        box.innerHTML = '';
-        res.forEach(r => {
-          const d = document.createElement('div'); d.textContent = r.label;
-          d.onclick = () => { input.value = r.label; setPoint(key, r.lat, r.lon, true); box.style.display = 'none'; };
-          box.appendChild(d);
-        });
-        box.style.display = res.length ? 'block' : 'none';
-      } catch (e) {}
-    }, 300);
+    const q = input.value.trim();
+    if (q.length < 2) { if (ctrl) ctrl.abort(); token++; wrap.classList.remove('busy'); hide(); return; }
+    timer = setTimeout(() => run(q), 400); // spaced out: OneMap throttles bursts
+  });
+  input.addEventListener('keydown', e => {
+    if (box.style.display !== 'block' || !items.length) { if (e.key === 'Enter') { clearTimeout(timer); const q = input.value.trim(); if (q.length >= 2) run(q); } return; }
+    if (e.key === 'ArrowDown') { e.preventDefault(); setActive((active + 1) % items.length); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setActive((active - 1 + items.length) % items.length); }
+    else if (e.key === 'Enter') { e.preventDefault(); choose(items[Math.max(active, 0)]); }
+    else if (e.key === 'Escape') hide();
+  });
+  input.addEventListener('focus', () => { input.select(); if (items.length && input.value.trim().length >= 2 && box.children.length) box.style.display = 'block'; });
+  input.addEventListener('blur', () => setTimeout(hide, 120));
+  document.querySelector(`[data-clear="${key}"]`).addEventListener('click', () => { // quick way to start a new search
+    if (ctrl) ctrl.abort(); token++; clearTimeout(timer); wrap.classList.remove('busy');
+    input.value = ''; items = []; hide(); clearPoint(key); input.focus();
   });
 }
 wireSearch('from'); wireSearch('to');
 
 // ================= planning =================
-let plans = [], activePlan = 0, replanTimer;
+let plans = [], activePlan = 0, replanTimer, routeBounds = null;
+// ---- departure time: "now" or a picked time, always read as Singapore time ----
+let departAt = ''; // 'YYYY-MM-DDTHH:mm' when settings.depart === 'custom' (not saved between visits)
+const clockNow = () => sgClock(settings.depart === 'custom' ? departAt : '');
+function updateWhenInfo() {
+  const c = clockNow(), t = timeInfo(c);
+  $('when-info').textContent = (settings.depart === 'custom' ? 'Leaving ' : 'Now: ') + t.label + (t.earlyBird ? ' · early-bird fares' : '');
+  $('depart-row').hidden = settings.depart !== 'custom';
+}
+setInterval(() => { if (settings.depart === 'now') updateWhenInfo(); }, 60000);
+
 const planOptions = () => ({
   speed: settings.speed,
   fold_min: settings.fold,
   alight_min: settings.alight,
   transfer_adj: settings.transferAdj,
-  peak: settings.tod === 'peak',
+  peak: timeInfo(clockNow()).peak,
   transfer_penalty: settings.transferPen,
   max_ride_km: settings.maxRide,
   allow_mid: settings.allowMid,
@@ -276,16 +353,38 @@ function gmaps(l) {
 
 const fmt = m => { m = Math.round(m); return m >= 60 ? Math.floor(m / 60) + ' h ' + (m % 60) + ' min' : m + ' min'; };
 
+// fare for every rail leg: summed track length of its segments, priced when the leg starts (early-bird before 7:45 am on weekdays)
+function addFares() {
+  const c = clockNow(), t = timeInfo(c);
+  plans.forEach(p => {
+    let elapsed = 0, total = 0;
+    p.legs.forEach(l => {
+      if (l.mode === 'mrt') {
+        l.railKm = l.segments.reduce((s, sg) => s + polyKm(sg.coords), 0);
+        l.fare = railFare(l.railKm, { type: settings.fareType, earlyBird: t.weekday && c.minutes + elapsed < 7 * 60 + 45, date: c.iso });
+        total += l.fare;
+      }
+      elapsed += l.min;
+    });
+    p.fare = Math.round(total * 100) / 100;
+  });
+}
+const money = x => '$' + x.toFixed(2);
+
 function render() {
+  addFares();
+  const t = timeInfo(clockNow());
+  const note = settings.showFares && plans.some(p => p.fare > 0)
+    ? `<div class="hint">Fares are estimated ${FARE_TYPES[settings.fareType].toLowerCase()} card fares${t.earlyBird ? ' (early-bird discount before 7:45 am on weekdays)' : ''}, based on the track distance, so they can be one fare band off. Each train ride is a separate journey when you cycle in between.</div>` : '';
   $('out').innerHTML = plans.map((p, i) => `
     <div class="plan" data-i="${i}">
       <h2>${p.label}</h2>
       <div class="big">${fmt(p.total_min)}</div>
-      <div class="split"><span>Cycling <b>${p.bike_km} km</b> · ${fmt(p.bike_min)}</span><span>MRT/LRT &amp; transfers <b>${fmt(p.mrt_min)}</b></span></div>
+      <div class="split"><span>Cycling <b>${p.bike_km} km</b> · ${fmt(p.bike_min)}</span><span>MRT/LRT &amp; transfers <b>${fmt(p.mrt_min)}</b></span>${settings.showFares && p.fare > 0 ? `<span class="fare">Fare <b>≈ ${money(p.fare)}</b></span>` : ''}</div>
       ${p.legs.map(l => l.mode === 'bike'
         ? `<div class="leg"><span class="tag bike">BIKE</span><span>${l.from} → ${l.to}<br><span style="color:var(--mute)">${l.km} km · ${fmt(l.min)}</span><br><a class="gbtn" href="${gmaps(l)}" target="_blank" rel="noopener">🗺️ Open in Google Maps</a></span></div>`
-        : `<div class="leg"><span class="tag mrt" style="${l.segments.every(s => isLrt(s.line)) ? 'background:' + LRT_GREY : ''}">${l.segments.every(s => isLrt(s.line)) ? 'LRT' : 'MRT'}</span><span>${l.segments.map(s => `<b>${lineLabel(s.line)}</b> ${s.from} → ${s.to} (${s.stops} stops)`).join('<br>')}<br><span style="color:var(--mute)">${fmt(l.min)} incl. fold &amp; wait</span></span></div>`).join('')}
-    </div>`).join('');
+        : `<div class="leg"><span class="tag mrt" style="${l.segments.every(s => isLrt(s.line)) ? 'background:' + LRT_GREY : ''}">${l.segments.every(s => isLrt(s.line)) ? 'LRT' : 'MRT'}</span><span>${l.segments.map(s => `<b>${lineLabel(s.line)}</b> ${s.from} → ${s.to} (${s.stops} stops)`).join('<br>')}<br><span style="color:var(--mute)">${fmt(l.min)} incl. fold &amp; wait${settings.showFares ? ` · ${l.railKm.toFixed(1)} km · <b class="fare">≈ ${money(l.fare)}</b>` : ''}</span></span></div>`).join('')}
+    </div>`).join('') + note;
   document.querySelectorAll('.plan').forEach(el => el.onclick = () => show(+el.dataset.i));
   document.querySelectorAll('.gbtn').forEach(a => a.onclick = e => e.stopPropagation());
 }
@@ -314,12 +413,13 @@ function show(i) {
       });
     }
   });
-  map.fitBounds(L.latLngBounds(pts), { padding: [40, 40] });
+  routeBounds = L.latLngBounds(pts);
+  map.fitBounds(routeBounds, { padding: [40, 40] });
 }
 
 // ================= settings sheet =================
 const sheet = $('settings');
-const openSettings = () => { sheet.classList.add('open'); };
+const openSettings = () => { updateWhenInfo(); sheet.classList.add('open'); };
 const closeSettings = () => { sheet.classList.remove('open'); };
 $('open-settings').onclick = openSettings;
 $('close-settings').onclick = closeSettings;
@@ -341,26 +441,35 @@ function syncSettingsUI() {
 document.querySelectorAll('[data-key]').forEach(el => {
   const apply = () => {
     const key = el.dataset.key;
-    let v = el.type === 'checkbox' ? el.checked : el.type === 'number' || el.type === 'range' || el.tagName === 'SELECT' ? +el.value : el.value;
+    let v = el.type === 'checkbox' ? el.checked : el.type === 'number' || el.type === 'range' || (el.tagName === 'SELECT' && !Number.isNaN(+el.value)) ? +el.value : el.value;
     if (el.type === 'number') { const lo = +el.min, hi = +el.max; if (Number.isNaN(v)) return; v = Math.min(hi, Math.max(lo, v)); el.value = v; }
     settings[key] = v; saveSettings();
     const out = document.querySelector(`[data-out="${key}"]`);
     if (out) out.textContent = key === 'bikePen' ? v.toFixed(1) + '×' : v + ' min';
-    if (key === 'showNet' || key === 'showLabels') updateNetworkVisibility(); else replanSoon();
+    if (key === 'showNet' || key === 'showLabels') updateNetworkVisibility();
+    else if (key === 'showFares' || key === 'fareType') { if (plans.length) { render(); show(activePlan); } }
+    else replanSoon();
   };
   el.addEventListener(el.type === 'range' ? 'input' : 'change', apply);
 });
 document.querySelectorAll('[data-seg]').forEach(g => g.querySelectorAll('button').forEach(b => b.onclick = () => {
   settings[g.dataset.seg] = b.dataset.v; saveSettings(); syncSettingsUI();
-  if (g.dataset.seg === 'theme') applyTheme(); else replanSoon();
+  if (g.dataset.seg === 'theme') { applyTheme(); return; }
+  if (g.dataset.seg === 'depart') {
+    if (settings.depart === 'custom' && !departAt) { const n = sgClock(''); departAt = `${n.iso}T${String(n.h).padStart(2, '0')}:${String(n.mi).padStart(2, '0')}`; $('depart-at').value = departAt; }
+    updateWhenInfo();
+  }
+  replanSoon();
 }));
+$('depart-at').addEventListener('change', e => { departAt = e.target.value; updateWhenInfo(); replanSoon(); });
 document.querySelectorAll('#line-chips button').forEach(b => b.onclick = () => {
   const s = new Set(settings.lines); s.has(b.dataset.line) ? s.delete(b.dataset.line) : s.add(b.dataset.line);
   settings.lines = [...s]; saveSettings(); syncSettingsUI(); replanSoon();
 });
-$('reset-settings').onclick = () => { settings = { ...DEFAULT_SETTINGS, lines: [...DEFAULT_SETTINGS.lines] }; saveSettings(); syncSettingsUI(); applyTheme(); replanSoon(); };
+$('reset-settings').onclick = () => { settings = { ...DEFAULT_SETTINGS, lines: [...DEFAULT_SETTINGS.lines] }; departAt = ''; saveSettings(); syncSettingsUI(); updateWhenInfo(); applyTheme(); replanSoon(); };
 
 syncSettingsUI();
+updateWhenInfo();
 applyTheme();
 
 // ================= feedback e-mail =================

@@ -25,15 +25,28 @@
   #side { overflow-y:auto; padding:16px; border-right:1px solid var(--line); }
   #map { height:100vh; background:var(--bg); }
   .top { display:flex; align-items:center; gap:8px; margin:0 0 12px; color:var(--accent); }
-  .top h1 { font-size:18px; margin:0; color:var(--ink); flex:1; }
+  .top .titles { flex:1; min-width:0; } .top h1 { font-size:18px; line-height:1.15; margin:0; color:var(--ink); } .top .sub { font-size:12px; color:var(--mute); }
   .icon { margin:0; width:38px; height:38px; padding:0; background:var(--card); color:var(--ink); border:1px solid var(--line); font-size:18px; border-radius:10px; cursor:pointer; display:inline-grid; place-items:center; text-decoration:none; flex:none; }
   .top { gap:6px; }
   label { display:block; font-size:12px; color:var(--mute); margin:10px 0 3px; }
   input[type=text], input[type=number], select { width:100%; padding:8px 10px; border:1px solid var(--line); border-radius:8px; background:var(--card); color:var(--ink); font:inherit; }
   .field { position:relative; }
   .sugg { position:absolute; left:0; right:0; top:100%; z-index:1000; background:var(--card); border:1px solid var(--line); border-radius:8px; max-height:220px; overflow:auto; display:none; box-shadow:var(--shadow); }
-  .sugg div { padding:7px 10px; cursor:pointer; font-size:13px; }
-  .sugg div:hover { background:var(--bg); }
+  .sugg { max-height:min(340px, 52vh); }
+  .sugg .it { display:flex; gap:10px; align-items:flex-start; padding:8px 10px; cursor:pointer; }
+  .sugg .it:hover, .sugg .it.act { background:var(--bg); }
+  .sugg .ic { flex:none; width:22px; text-align:center; font-size:16px; line-height:1.3; }
+  .sugg .tt { font-weight:600; font-size:14px; line-height:1.3; }
+  .sugg .ss { font-size:12px; color:var(--mute); line-height:1.3; }
+  .sugg .msg { padding:12px; font-size:13px; color:var(--mute); }
+  .inwrap { position:relative; flex:1; min-width:0; }
+  .inwrap input { padding-right:36px; }
+  .clear { display:none; position:absolute; right:5px; top:50%; transform:translateY(-50%); margin:0; width:28px; height:28px; padding:0; background:transparent; color:var(--mute); font-size:14px; border-radius:50%; }
+  .clear:hover { background:var(--bg); color:var(--ink); }
+  .inwrap input:not(:placeholder-shown) ~ .clear { display:block; }
+  .inwrap.busy::before { content:""; position:absolute; right:38px; top:50%; margin-top:-7px; width:14px; height:14px; border:2px solid var(--line); border-top-color:var(--accent); border-radius:50%; animation:spin .8s linear infinite; }
+  .leaflet-bar a.reset-view { font-size:17px; line-height:30px; text-decoration:none; }
+  .fare { color:var(--ink); }
   .pin { display:flex; gap:6px; }
   .pinbtn { margin:0; width:42px; padding:0; background:var(--card); border:1px solid var(--line); font-size:18px; flex:none; }
   .pinbtn.on { background:var(--accent); }
@@ -98,6 +111,8 @@
   .opt:first-of-type { border-top:0; }
   .opt .t { flex:1; } .opt .t small { display:block; color:var(--mute); font-size:12px; }
   .opt input[type=number], .opt select { width:92px; flex:none; }
+  .opt select[data-key="fareType"] { width:150px; } .opt input[type=datetime-local] { width:auto; max-width:200px; padding:6px 8px; border:1px solid var(--line); border-radius:8px; background:var(--card); color:var(--ink); font:inherit; flex:none; }
+  .opt[hidden] { display:none; }
   .opt input[type=range] { width:140px; flex:none; accent-color:var(--accent); }
   .opt output { width:42px; text-align:right; font-variant-numeric:tabular-nums; flex:none; }
   .switch { position:relative; width:44px; height:26px; flex:none; }
@@ -127,15 +142,15 @@
 <div id="side">
   <div class="top">
     <svg viewBox="0 0 64 64" width="26" height="26" aria-hidden="true"><circle cx="32" cy="32" r="29" fill="none" stroke="currentColor" stroke-width="5"/><circle cx="32" cy="32" r="22" fill="none" stroke="currentColor" stroke-width="1.5"/><g stroke="currentColor" stroke-width="1.2"><line x1="32" y1="32" x2="54" y2="32"/><line x1="32" y1="32" x2="52.33" y2="40.42"/><line x1="32" y1="32" x2="47.56" y2="47.56"/><line x1="32" y1="32" x2="40.42" y2="52.33"/><line x1="32" y1="32" x2="32" y2="54"/><line x1="32" y1="32" x2="23.58" y2="52.33"/><line x1="32" y1="32" x2="16.44" y2="47.56"/><line x1="32" y1="32" x2="11.67" y2="40.42"/><line x1="32" y1="32" x2="10" y2="32"/><line x1="32" y1="32" x2="11.67" y2="23.58"/><line x1="32" y1="32" x2="16.44" y2="16.44"/><line x1="32" y1="32" x2="23.58" y2="11.67"/><line x1="32" y1="32" x2="32" y2="10"/><line x1="32" y1="32" x2="40.42" y2="11.67"/><line x1="32" y1="32" x2="47.56" y2="16.44"/><line x1="32" y1="32" x2="52.33" y2="23.58"/></g><circle cx="32" cy="32" r="4.5" fill="currentColor"/></svg>
-    <h1>Bike-MRT</h1>
+    <div class="titles"><h1>Bike-MRT</h1><div class="sub">by Hansen Khornelius</div></div>
     <a class="icon" id="feedback" title="Send feedback" aria-label="Send feedback" href="#">✉️</a>
     <button class="icon" id="open-help" title="How to use" aria-label="How to use">❓</button>
     <button class="icon" id="open-settings" title="Settings" aria-label="Settings">⚙️</button>
   </div>
   <label>From</label>
-  <div class="field pin"><input type="text" id="from" value="NTU Binjai Hall"><button class="pinbtn" id="gps-from" title="Use my current location">🎯</button><button class="pinbtn" id="pin-from" title="Pick on map">📍</button><div class="sugg" id="sugg-from"></div></div>
+  <div class="field pin"><div class="inwrap"><input type="text" id="from" value="NTU Binjai Hall" placeholder="Where from?" autocomplete="off" enterkeyhint="search"><button type="button" class="clear" data-clear="from" aria-label="Clear start">✕</button></div><button class="pinbtn" id="gps-from" title="Use my current location">🎯</button><button class="pinbtn" id="pin-from" title="Pick on map">📍</button><div class="sugg" id="sugg-from"></div></div>
   <label>To</label>
-  <div class="field pin"><input type="text" id="to" placeholder="Address, building, postal code, or pick on map"><button class="pinbtn" id="pin-to" title="Pick on map">📍</button><div class="sugg" id="sugg-to"></div></div>
+  <div class="field pin"><div class="inwrap"><input type="text" id="to" placeholder="Building, business, address or MRT station" autocomplete="off" enterkeyhint="search"><button type="button" class="clear" data-clear="to" aria-label="Clear destination">✕</button></div><button class="pinbtn" id="pin-to" title="Pick on map">📍</button><div class="sugg" id="sugg-to"></div></div>
   <button id="go">Find fastest route</button>
   <div id="out"></div>
 </div>
@@ -151,7 +166,7 @@
     <ol class="steps">
       <li><span><b>Choose where from and to.</b> Type an address or postal code, tap 📍 and then the map, or press 🎯 to start from where you are. Pins can be dragged.</span></li>
       <li><span><b>Tap “Find fastest route”.</b> The app compares cycling the whole way, taking trains, and mixes of both, even cycle → train → cycle → train → cycle.</span></li>
-      <li><span><b>Read the plan.</b> Green <b>BIKE</b> legs are cycling, coloured <b>MRT</b> / <b>LRT</b> legs are trains. Tap a plan to see it on the map.</span></li>
+      <li><span><b>Read the plan.</b> Green <b>BIKE</b> legs are cycling, coloured <b>MRT</b> / <b>LRT</b> legs are trains, with an estimated fare. Tap a plan to see it on the map.</span></li>
       <li><span><b>Navigate each ride.</b> Every cycling leg has an <b>Open in Google Maps</b> button for turn-by-turn directions.</span></li>
       <li><span><b>Make it yours in ⚙️ Settings.</b> Dark mode, which lines to use, riding speed, longest ride, waiting and transfer times.</span></li>
     </ol>
@@ -199,12 +214,19 @@
         <button data-line="SK" style="--c:#748477">Sengkang LRT</button>
         <button data-line="PG" style="--c:#748477">Punggol LRT</button>
       </div>
-      <div class="opt"><div class="t">Time of day<small>Peak: trains every 2–3 min. Off-peak: about 5 min. Sets your waiting time</small></div>
-        <div class="seg" data-seg="tod"><button data-v="offpeak">Off-peak</button><button data-v="peak">Peak</button></div></div>
+      <div class="opt"><div class="t">Leaving<small id="when-info">Peak or off-peak is worked out from the time and day</small></div>
+        <div class="seg" data-seg="depart"><button data-v="now">Now</button><button data-v="custom">Pick time</button></div></div>
+      <div class="opt" id="depart-row" hidden><div class="t">Departure time<small>Singapore time. Sets waiting times (weekday 7–9 am and 5–7 pm are peak) and fares</small></div><input type="datetime-local" id="depart-at"></div>
       <div class="opt"><div class="t">Fold + walk to platform<small>Minutes per boarding, waiting is added on top</small></div><input type="number" data-key="fold" min="0" max="30" step="0.5"></div>
       <div class="opt"><div class="t">Exit + unfold<small>Minutes after leaving the station</small></div><input type="number" data-key="alight" min="0" max="30" step="0.5"></div>
       <div class="opt"><div class="t">Extra time per line change<small>On top of the estimated walk + wait, can be negative</small></div><input type="number" data-key="transferAdj" min="-2" max="10" step="0.5"></div>
       <div class="opt"><div class="t">Avoid transfers<small>Extra minutes per change when ranking plans</small></div><input type="range" data-key="transferPen" min="0" max="10" step="1"><output data-out="transferPen"></output></div>
+    </section>
+
+    <section>
+      <h3>Fares</h3>
+      <div class="opt"><div class="t">Show MRT/LRT fares<small>Estimated card fare for each train ride</small></div><label class="switch"><input type="checkbox" data-key="showFares"><span></span></label></div>
+      <div class="opt"><div class="t">Fare type</div><select data-key="fareType"><option value="adult">Adult</option><option value="student">Student</option><option value="senior">Senior / disability</option></select></div>
     </section>
 
     <section>
