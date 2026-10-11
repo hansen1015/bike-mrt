@@ -50,7 +50,7 @@
 <div id="side">
   <h1 style="display:flex;align-items:center;gap:8px;color:var(--accent)"><svg viewBox="0 0 64 64" width="26" height="26" aria-hidden="true"><circle cx="32" cy="32" r="29" fill="none" stroke="currentColor" stroke-width="5"/><circle cx="32" cy="32" r="22" fill="none" stroke="currentColor" stroke-width="1.5"/><line x1="32" y1="32" x2="54.00" y2="32.00" stroke="currentColor" stroke-width="1.2"/><line x1="32" y1="32" x2="52.33" y2="40.42" stroke="currentColor" stroke-width="1.2"/><line x1="32" y1="32" x2="47.56" y2="47.56" stroke="currentColor" stroke-width="1.2"/><line x1="32" y1="32" x2="40.42" y2="52.33" stroke="currentColor" stroke-width="1.2"/><line x1="32" y1="32" x2="32.00" y2="54.00" stroke="currentColor" stroke-width="1.2"/><line x1="32" y1="32" x2="23.58" y2="52.33" stroke="currentColor" stroke-width="1.2"/><line x1="32" y1="32" x2="16.44" y2="47.56" stroke="currentColor" stroke-width="1.2"/><line x1="32" y1="32" x2="11.67" y2="40.42" stroke="currentColor" stroke-width="1.2"/><line x1="32" y1="32" x2="10.00" y2="32.00" stroke="currentColor" stroke-width="1.2"/><line x1="32" y1="32" x2="11.67" y2="23.58" stroke="currentColor" stroke-width="1.2"/><line x1="32" y1="32" x2="16.44" y2="16.44" stroke="currentColor" stroke-width="1.2"/><line x1="32" y1="32" x2="23.58" y2="11.67" stroke="currentColor" stroke-width="1.2"/><line x1="32" y1="32" x2="32.00" y2="10.00" stroke="currentColor" stroke-width="1.2"/><line x1="32" y1="32" x2="40.42" y2="11.67" stroke="currentColor" stroke-width="1.2"/><line x1="32" y1="32" x2="47.56" y2="16.44" stroke="currentColor" stroke-width="1.2"/><line x1="32" y1="32" x2="52.33" y2="23.58" stroke="currentColor" stroke-width="1.2"/><circle cx="32" cy="32" r="4.5" fill="currentColor"/></svg><span style="color:var(--ink)">Bike-MRT</span></h1>
   <label>From</label>
-  <div class="field pin"><input type="text" id="from" value="NTU Binjai Hall"><button class="pinbtn" id="pin-from" title="Pick on map">📍</button><div class="sugg" id="sugg-from"></div></div>
+  <div class="field pin"><input type="text" id="from" value="NTU Binjai Hall"><button class="pinbtn" id="gps-from" title="Use my current location">🎯</button><button class="pinbtn" id="pin-from" title="Pick on map">📍</button><div class="sugg" id="sugg-from"></div></div>
   <label>To</label>
   <div class="field pin"><input type="text" id="to" placeholder="Address, building, postal code, or pick on map"><button class="pinbtn" id="pin-to" title="Pick on map">📍</button><div class="sugg" id="sugg-to"></div></div>
   <details>
@@ -176,6 +176,25 @@ function setPicking(key) {
   $('map').classList.toggle('picking', !!picking);
 }
 $('pin-from').onclick = () => setPicking('from');
+
+// start from the phone's GPS position
+$('gps-from').onclick = () => {
+  const btn = $('gps-from'), input = $('from');
+  if (!navigator.geolocation) { input.value = ''; input.placeholder = 'GPS is not available on this device'; return; }
+  btn.classList.add('on'); input.placeholder = 'Finding your location…';
+  navigator.geolocation.getCurrentPosition(pos => {
+    btn.classList.remove('on');
+    const { latitude: lat, longitude: lon, accuracy } = pos.coords;
+    if (lat < 1.15 || lat > 1.50 || lon < 103.55 || lon > 104.10) { input.value = ''; input.placeholder = 'You seem to be outside Singapore: pick a start instead'; return; }
+    setPoint('from', lat, lon, true);
+    input.value = 'My location (±' + Math.round(accuracy) + ' m)';
+    map.setView([lat, lon], Math.max(map.getZoom(), 15));
+  }, err => {
+    btn.classList.remove('on');
+    input.value = '';
+    input.placeholder = err.code === 1 ? 'Location permission denied: allow it in your browser settings' : 'Could not get your location, try again or pick on the map';
+  }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000 });
+};
 $('pin-to').onclick = () => setPicking('to');
 map.on('click', e => {
   // with no button active: first click sets the destination (start is usually Binjai Hall)

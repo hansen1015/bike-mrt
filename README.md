@@ -5,9 +5,12 @@ Fastest door-to-door commute planner for a **Brompton + MRT/LRT** in Singapore. 
 - total time, cycling km/minutes and rail minutes,
 - every leg on a map (cycle routes along real roads and park connectors, rail along the real track),
 - the MRT/LRT lines, stations and transfers,
-- a Google Maps cycling link for each cycling leg.
+- a Google Maps cycling link for each cycling leg,
+- start from your **GPS location** (the 🎯 button), a searched address, or a pin dropped on the map.
 
 Everything runs **in your browser**: there is no backend. It is a static site that can be hosted for free (GitHub Pages) and installed on a phone as an app (PWA: open the site, then "Add to Home Screen").
+
+> **Vibe-coded with Claude.** This project was written by [Claude](https://claude.com/claude-code) (Anthropic's AI coding assistant, via Claude Code) through a conversation with the repo owner, who directed the design and features. It has not had a line-by-line human code review, so treat the routes and times as estimates, check them against the map, and please open an issue or PR if you find a bug.
 
 ## How it works
 
