@@ -2,7 +2,7 @@
 <html lang="en" data-theme="light">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <title>Bike-MRT</title>
 <script>
   // apply the saved theme before first paint (avoids a light flash in dark mode)
@@ -22,12 +22,16 @@
   :root[data-theme="dark"] { color-scheme:dark; --bg:#14171a; --card:#1d2125; --ink:#eceff3; --mute:#98a2b3; --line:#2c3238; --accent:#3ccf91; --bike:#2fb87f; --mrt:#ff6b5e; --casing:#0d1114; --on-accent:#06251a; --shadow:0 8px 30px rgba(0,0,0,.6); }
   * { box-sizing:border-box; }
   body { margin:0; font:15px/1.45 system-ui,sans-serif; background:var(--bg); color:var(--ink); height:100vh; display:grid; grid-template-columns:400px 1fr; }
-  #side { overflow-y:auto; padding:16px; border-right:1px solid var(--line); }
+  #side { display:flex; flex-direction:column; min-height:0; overflow:hidden; border-right:1px solid var(--line); background:var(--bg); }
+  #side-body { flex:1; min-height:0; overflow-y:auto; padding:16px; overscroll-behavior:contain; }
+  #grab { display:none; }
   #map { height:100vh; background:var(--bg); }
   .top { display:flex; align-items:center; gap:8px; margin:0 0 12px; color:var(--accent); }
   .top .titles { flex:1; min-width:0; } .top h1 { font-size:18px; line-height:1.15; margin:0; color:var(--ink); } .top .sub { font-size:12px; color:var(--mute); }
   .icon { margin:0; width:38px; height:38px; padding:0; background:var(--card); color:var(--ink); border:1px solid var(--line); font-size:18px; border-radius:10px; cursor:pointer; display:inline-grid; place-items:center; text-decoration:none; flex:none; }
   .top { gap:6px; }
+  .icon.wide { display:inline-flex; align-items:center; justify-content:center; white-space:nowrap; width:auto; padding:0 11px; gap:6px; font-size:13px; font-weight:600; }
+  .icon.wide span { font-size:13px; }
   label { display:block; font-size:12px; color:var(--mute); margin:10px 0 3px; }
   input[type=text], input[type=number], select { width:100%; padding:8px 10px; border:1px solid var(--line); border-radius:8px; background:var(--card); color:var(--ink); font:inherit; }
   .field { position:relative; }
@@ -132,18 +136,27 @@
   .sheet .actions .ghost { background:var(--card); color:var(--ink); border:1px solid var(--line); }
 
   @media (max-width:800px) {
-    body { grid-template-columns:1fr; grid-template-rows:42vh 1fr; grid-template-rows:42dvh 1fr; height:100vh; height:100dvh; }
-    #map { order:-1; height:100%; } #side { border-right:0; border-top:1px solid var(--line); padding:12px; } .big { font-size:24px; }
+    /* phone layout: the map fills the screen and the panel is a bottom sheet you can drag up and down */
+    body { display:block; height:100vh; height:100dvh; overflow:hidden; }
+    #map { position:fixed; inset:0; height:100vh; height:100dvh; }
+    #side { position:fixed; left:0; right:0; bottom:0; height:50vh; z-index:1200; border-right:0; border-top:1px solid var(--line); border-radius:18px 18px 0 0; box-shadow:0 -6px 24px rgba(0,0,0,.22); }
+    #grab { display:flex; justify-content:center; align-items:center; height:26px; flex:none; touch-action:none; cursor:grab; }
+    #grab span { width:46px; height:5px; border-radius:3px; background:var(--mute); opacity:.55; }
+    #side-body { padding:2px 12px calc(14px + env(safe-area-inset-bottom)); }
+    .big { font-size:24px; }
+    .leaflet-bottom { bottom:var(--sheetH, 50vh); } /* keep the map credit visible above the sheet */
     #settings, #intro { align-items:stretch; } .sheet { border-radius:0; max-height:100dvh; width:100%; }
   }
 </style>
 </head>
 <body>
 <div id="side">
+  <div id="grab" role="separator" aria-label="Drag to resize the panel"><span></span></div>
+  <div id="side-body">
   <div class="top">
     <svg viewBox="0 0 64 64" width="26" height="26" aria-hidden="true"><circle cx="32" cy="32" r="29" fill="none" stroke="currentColor" stroke-width="5"/><circle cx="32" cy="32" r="22" fill="none" stroke="currentColor" stroke-width="1.5"/><g stroke="currentColor" stroke-width="1.2"><line x1="32" y1="32" x2="54" y2="32"/><line x1="32" y1="32" x2="52.33" y2="40.42"/><line x1="32" y1="32" x2="47.56" y2="47.56"/><line x1="32" y1="32" x2="40.42" y2="52.33"/><line x1="32" y1="32" x2="32" y2="54"/><line x1="32" y1="32" x2="23.58" y2="52.33"/><line x1="32" y1="32" x2="16.44" y2="47.56"/><line x1="32" y1="32" x2="11.67" y2="40.42"/><line x1="32" y1="32" x2="10" y2="32"/><line x1="32" y1="32" x2="11.67" y2="23.58"/><line x1="32" y1="32" x2="16.44" y2="16.44"/><line x1="32" y1="32" x2="23.58" y2="11.67"/><line x1="32" y1="32" x2="32" y2="10"/><line x1="32" y1="32" x2="40.42" y2="11.67"/><line x1="32" y1="32" x2="47.56" y2="16.44"/><line x1="32" y1="32" x2="52.33" y2="23.58"/></g><circle cx="32" cy="32" r="4.5" fill="currentColor"/></svg>
     <div class="titles"><h1>Bike-MRT</h1><div class="sub">by Hansen Khornelius</div></div>
-    <a class="icon" id="feedback" title="Send feedback" aria-label="Send feedback" href="#">✉️</a>
+    <a class="icon wide" id="feedback" title="Send feedback by email" href="#">✉️ <span>Feedback</span></a>
     <button class="icon" id="open-help" title="How to use" aria-label="How to use">❓</button>
     <button class="icon" id="open-settings" title="Settings" aria-label="Settings">⚙️</button>
   </div>
@@ -153,6 +166,7 @@
   <div class="field pin"><div class="inwrap"><input type="text" id="to" placeholder="Building, business, address or MRT station" autocomplete="off" enterkeyhint="search"><button type="button" class="clear" data-clear="to" aria-label="Clear destination">✕</button></div><button class="pinbtn" id="pin-to" title="Pick on map">📍</button><div class="sugg" id="sugg-to"></div></div>
   <button id="go">Find fastest route</button>
   <div id="out"></div>
+  </div>
 </div>
 <div id="map"></div>
 <div id="toast" role="status"></div>
@@ -225,7 +239,7 @@
 
     <section>
       <h3>Fares</h3>
-      <div class="opt"><div class="t">Show MRT/LRT fares<small>Estimated card fare for each train ride</small></div><label class="switch"><input type="checkbox" data-key="showFares"><span></span></label></div>
+      <div class="opt"><div class="t">Show MRT/LRT fares<small>Shown on each train ride once you have found a route</small></div><label class="switch"><input type="checkbox" data-key="showFares"><span></span></label></div>
       <div class="opt"><div class="t">Fare type</div><select data-key="fareType"><option value="adult">Adult</option><option value="student">Student</option><option value="senior">Senior / disability</option></select></div>
     </section>
 

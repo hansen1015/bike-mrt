@@ -18,9 +18,16 @@ const DEFAULT_SETTINGS = {
 const LINE_GROUPS = { NS: ['NS'], EW: ['EW', 'CG'], NE: ['NE'], CC: ['CC'], DT: ['DT'], TE: ['TE'], BP: ['BP'], SK: ['SE', 'SW'], PG: ['PE', 'PW'] };
 let settings = { ...DEFAULT_SETTINGS };
 try { settings = { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem(STORE) || '{}') }; } catch (e) {}
-const saveSettings = () => { try { localStorage.setItem(STORE, JSON.stringify(settings)); } catch (e) {} };
+settings.depart = 'now'; // "Leaving" always starts at Now
+if (!['adult', 'student', 'senior'].includes(settings.fareType)) settings.fareType = 'adult';
+const saveSettings = () => { try { const { depart, ...keep } = settings; localStorage.setItem(STORE, JSON.stringify(keep)); } catch (e) {} };
 
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+if ('serviceWorker' in navigator) {
+  const hadController = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.register('sw.js').catch(() => {});
+  let reloaded = false; // a new version just took over: reload once so you are not left on the old one
+  navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadController && !reloaded) { reloaded = true; location.reload(); } });
+}
 
 // ================= data (bike graph + rail network + land outline), loaded once =================
 // the big graph files are published gzipped; decompress in the browser
@@ -63,8 +70,8 @@ const ResetView = L.Control.extend({
 });
 let sgBounds = null;
 function resetView() {
-  if (plans.length && routeBounds) map.fitBounds(routeBounds, { padding: [40, 40] });
-  else if (sgBounds) map.fitBounds(sgBounds);
+  if (plans.length && routeBounds) fitToSheet(routeBounds);
+  else if (sgBounds) fitToSheet(sgBounds, 8);
   else map.setView([1.3521, 103.8198], 12);
 }
 new ResetView().addTo(map);
@@ -120,7 +127,8 @@ landReady.then(rings => {
   land = rings.map(ring => ({ ring, minLat: Math.min(...ring.map(p => p[0])), maxLat: Math.max(...ring.map(p => p[0])), minLon: Math.min(...ring.map(p => p[1])), maxLon: Math.max(...ring.map(p => p[1])) }));
   sgBounds = L.latLngBounds(land[0].ring); // the main island is the first (largest) ring
   const pad = 0.04;
-  const bounds = L.latLngBounds([Math.min(...land.map(p => p.minLat)) - pad, Math.min(...land.map(p => p.minLon)) - pad],
+  const sheetRoom = mobileMQ.matches ? 0.3 : 0; // phones: extra room to the south so the map can be moved up above the bottom sheet
+  const bounds = L.latLngBounds([Math.min(...land.map(p => p.minLat)) - pad - sheetRoom, Math.min(...land.map(p => p.minLon)) - pad],
                                 [Math.max(...land.map(p => p.maxLat)) + pad, Math.max(...land.map(p => p.maxLon)) + pad]);
   const fit = () => { map.setMinZoom(map.getBoundsZoom(bounds)); };
   map.setMaxBounds(bounds); map.options.maxBoundsViscosity = 1.0;
@@ -150,6 +158,7 @@ async function geocode(q) {
 // ================= network overlay =================
 map.createPane('network'); map.getPane('network').style.zIndex = 350;
 map.createPane('route'); map.getPane('route').style.zIndex = 450;
+map.createPane('labels'); map.getPane('labels').style.zIndex = 460; // station names sit above the lines and the route
 const netLayer = L.layerGroup(), labelLayer = L.layerGroup();
 let railData = null;
 function drawNetwork() {
@@ -161,7 +170,7 @@ function drawNetwork() {
     L.polyline(e.coords, { pane: 'network', color: lineColor(e.line), weight: isLrt(e.line) ? 2.5 : 3.5, opacity: 1, interactive: false }).addTo(netLayer);
   });
   railData.stations.forEach(s => { // station names only (no dots), shown when zoomed in
-    L.marker([s.lat, s.lon], { pane: 'network', interactive: false, icon: L.divIcon({ className: 'stn-label', html: s.name, iconSize: [0, 0], iconAnchor: [-5, 6] }) }).addTo(labelLayer);
+    L.marker([s.lat, s.lon], { pane: 'labels', interactive: false, icon: L.divIcon({ className: 'stn-label', html: s.name, iconSize: [0, 0], iconAnchor: [-5, 6] }) }).addTo(labelLayer);
   });
   updateNetworkVisibility();
 }
@@ -251,6 +260,7 @@ function wireSearch(key) {
   const choose = r => {
     input.value = r.title; hide();
     if (!setPoint(key, r.lat, r.lon, true)) input.value = '';
+    else { input.blur(); setSheet('half'); }
   };
   const show = (list, msg) => {
     items = list; active = -1; box.innerHTML = '';
@@ -293,12 +303,19 @@ function wireSearch(key) {
     else if (e.key === 'Enter') { e.preventDefault(); choose(items[Math.max(active, 0)]); }
     else if (e.key === 'Escape') hide();
   });
-  input.addEventListener('focus', () => { input.select(); if (items.length && input.value.trim().length >= 2 && box.children.length) box.style.display = 'block'; });
+  input.addEventListener('focus', () => { setSheet('full'); input.select(); if (items.length && input.value.trim().length >= 2 && box.children.length) box.style.display = 'block'; });
   input.addEventListener('blur', () => setTimeout(hide, 120));
-  document.querySelector(`[data-clear="${key}"]`).addEventListener('click', () => { // quick way to start a new search
+  // The clear button acts on press and keeps the keyboard open. On a phone, tapping a button first closes the keyboard,
+  // which moves the layout and made the tap miss, so the text stayed.
+  const clearBtn = document.querySelector(`[data-clear="${key}"]`);
+  const doClear = e => {
+    e.preventDefault();
     if (ctrl) ctrl.abort(); token++; clearTimeout(timer); wrap.classList.remove('busy');
     input.value = ''; items = []; hide(); clearPoint(key); input.focus();
-  });
+  };
+  clearBtn.addEventListener('mousedown', e => e.preventDefault()); // do not steal focus from the field
+  clearBtn.addEventListener('touchstart', doClear, { passive: false });
+  clearBtn.addEventListener('click', doClear);                      // keyboard / assistive tech
 }
 wireSearch('from'); wireSearch('to');
 
@@ -380,7 +397,7 @@ function render() {
     <div class="plan" data-i="${i}">
       <h2>${p.label}</h2>
       <div class="big">${fmt(p.total_min)}</div>
-      <div class="split"><span>Cycling <b>${p.bike_km} km</b> · ${fmt(p.bike_min)}</span><span>MRT/LRT &amp; transfers <b>${fmt(p.mrt_min)}</b></span>${settings.showFares && p.fare > 0 ? `<span class="fare">Fare <b>≈ ${money(p.fare)}</b></span>` : ''}</div>
+      <div class="split"><span>Cycling <b>${p.bike_km} km</b> · ${fmt(p.bike_min)}</span><span>MRT/LRT &amp; transfers <b>${fmt(p.mrt_min)}</b></span>${settings.showFares ? (p.fare > 0 ? `<span class="fare">Fare <b>≈ ${money(p.fare)}</b></span>` : '<span>No fare (cycling only)</span>') : ''}</div>
       ${p.legs.map(l => l.mode === 'bike'
         ? `<div class="leg"><span class="tag bike">BIKE</span><span>${l.from} → ${l.to}<br><span style="color:var(--mute)">${l.km} km · ${fmt(l.min)}</span><br><a class="gbtn" href="${gmaps(l)}" target="_blank" rel="noopener">🗺️ Open in Google Maps</a></span></div>`
         : `<div class="leg"><span class="tag mrt" style="${l.segments.every(s => isLrt(s.line)) ? 'background:' + LRT_GREY : ''}">${l.segments.every(s => isLrt(s.line)) ? 'LRT' : 'MRT'}</span><span>${l.segments.map(s => `<b>${lineLabel(s.line)}</b> ${s.from} → ${s.to} (${s.stops} stops)`).join('<br>')}<br><span style="color:var(--mute)">${fmt(l.min)} incl. fold &amp; wait${settings.showFares ? ` · ${l.railKm.toFixed(1)} km · <b class="fare">≈ ${money(l.fare)}</b>` : ''}</span></span></div>`).join('')}
@@ -394,7 +411,7 @@ function show(i) {
   document.querySelectorAll('.plan').forEach((el, j) => el.classList.toggle('active', i === j));
   layer.clearLayers(); const pts = [];
   dimNetwork(true);
-  const casing = css('--casing'), dot = isDark() ? '#e8ecef' : '#222', fill = isDark() ? '#1d2125' : '#fff', bike = css('--bike');
+  const casing = css('--casing'), fill = isDark() ? '#1d2125' : '#fff', bike = css('--bike');
   plans[i].legs.forEach(l => {
     if (l.mode === 'bike') {
       L.polyline(l.coords, { pane: 'route', color: casing, weight: 9 }).addTo(layer);
@@ -404,17 +421,18 @@ function show(i) {
         const col = lineColor(sg.line);
         L.polyline(sg.coords, { pane: 'route', color: casing, weight: 11 }).addTo(layer);
         L.polyline(sg.coords, { pane: 'route', color: col, weight: 7 }).addTo(layer);
-        sg.stop_pts.forEach((p, k) => {
-          const end = k === 0 || k === sg.stop_pts.length - 1;
-          L.circleMarker(p, { pane: 'route', radius: end ? 8 : 4.5, color: end ? col : dot, weight: end ? 4 : 1.5, fillColor: fill, fillOpacity: 1 })
-            .bindTooltip(sg.stop_names[k], { permanent: end, direction: 'right', offset: [8, 0] }).addTo(layer);
+        // a dot only where you board, change line or get off (the ends of each ride), none for the stops in between
+        [0, sg.stop_pts.length - 1].forEach(k => {
+          L.circleMarker(sg.stop_pts[k], { pane: 'route', radius: 8, color: col, weight: 4, fillColor: fill, fillOpacity: 1 })
+            .bindTooltip(sg.stop_names[k], { permanent: true, direction: 'right', offset: [8, 0] }).addTo(layer);
         });
         pts.push(...sg.coords);
       });
     }
   });
   routeBounds = L.latLngBounds(pts);
-  map.fitBounds(routeBounds, { padding: [40, 40] });
+  if (sheetState === 'full') setSheet('half'); // reading the list at full height: drop to half so the route is visible
+  fitToSheet(routeBounds);
 }
 
 // ================= settings sheet =================
@@ -471,6 +489,53 @@ $('reset-settings').onclick = () => { settings = { ...DEFAULT_SETTINGS, lines: [
 syncSettingsUI();
 updateWhenInfo();
 applyTheme();
+
+// ================= phone layout: draggable bottom sheet =================
+// The map fills the screen; the panel is a sheet you drag between peek (map almost full screen), half and full.
+const mobileMQ = matchMedia('(max-width: 800px)');
+const sideEl = $('side'), grab = $('grab');
+let sheetState = 'half';
+const sheetPx = st => (st === 'peek' ? 112 : Math.round(window.innerHeight * (st === 'half' ? 0.5 : 0.9)));
+function setSheetPx(px, animate = true) {
+  sideEl.style.transition = animate ? 'height .22s ease' : 'none';
+  sideEl.style.height = px + 'px';
+  document.documentElement.style.setProperty('--sheetH', px + 'px');
+}
+function setSheet(st) { if (!mobileMQ.matches) return; sheetState = st; setSheetPx(sheetPx(st)); }
+function fitToSheet(bounds, pad = 40) { // keep the route inside the part of the map the sheet does not cover
+  const bottom = mobileMQ.matches ? sheetPx(sheetState) : 0;
+  map.fitBounds(bounds, { paddingTopLeft: [pad, pad], paddingBottomRight: [pad, pad + bottom] });
+}
+let drag = null;
+grab.addEventListener('pointerdown', e => {
+  drag = { y0: e.clientY, h0: sideEl.offsetHeight, lastY: e.clientY, lastT: performance.now(), v: 0, moved: 0 };
+  grab.setPointerCapture(e.pointerId);
+});
+grab.addEventListener('pointermove', e => {
+  if (!drag) return;
+  const h = Math.max(sheetPx('peek'), Math.min(sheetPx('full'), drag.h0 + (drag.y0 - e.clientY)));
+  const now = performance.now();
+  drag.v = (drag.lastY - e.clientY) / Math.max(1, now - drag.lastT); drag.lastY = e.clientY; drag.lastT = now;
+  drag.moved = Math.max(drag.moved, Math.abs(drag.y0 - e.clientY));
+  setSheetPx(h, false);
+});
+const endDrag = () => {
+  if (!drag) return;
+  const d = drag; drag = null;
+  const order = ['peek', 'half', 'full'];
+  if (d.moved < 6) { setSheet(order[(order.indexOf(sheetState) + 1) % 3 === 0 ? 1 : (order.indexOf(sheetState) + 1) % 3]); return; } // tap: step up, from full back to half
+  const target = sideEl.offsetHeight + d.v * 160; // a quick flick carries it further
+  setSheet(order.reduce((best, st) => (Math.abs(sheetPx(st) - target) < Math.abs(sheetPx(best) - target) ? st : best), 'half'));
+};
+grab.addEventListener('pointerup', endDrag);
+grab.addEventListener('pointercancel', endDrag);
+const applySheetMode = () => {
+  if (mobileMQ.matches) setSheetPx(sheetPx(sheetState), false);
+  else { sideEl.style.height = ''; sideEl.style.transition = ''; document.documentElement.style.removeProperty('--sheetH'); }
+};
+mobileMQ.addEventListener('change', applySheetMode);
+window.addEventListener('resize', applySheetMode);
+applySheetMode();
 
 // ================= feedback e-mail =================
 // assembled here (not written in the HTML) so it is not sitting in the page for address scrapers

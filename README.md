@@ -9,7 +9,7 @@ Fastest door-to-door commute planner for a **trifold bicycle + MRT/LRT** in Sing
 - an **intro screen** explaining how to use the app, with an "add to home screen" prompt where the browser supports it,
 - **search by building, business or station name** (merges MRT/LRT stations, [OneMap](https://www.onemap.gov.sg/) for buildings, landmarks and postal codes, and [Photon](https://photon.komoot.io/) for OpenStreetMap shops, cafes, clinics and other businesses), with a clear button and keyboard support,
 - **estimated MRT/LRT fares** per train ride and per plan (adult, student or senior/disability card fares),
-- a button to reset the map view,
+- a button to reset the map view, and on phones a draggable bottom sheet so the map can fill almost the whole screen,
 - a **settings page**: light / dark / auto theme (dark mode also darkens the map), cycling speed, longest single ride, cycling between stations on/off, "prefer trains over cycling", pick which MRT/LRT lines to use, a departure time (peak or off-peak is worked out from the time and day), fold and unfold times, extra time per line change, avoid-transfers, number of plans (saved on your device),
 - a feedback button (opens an email),
 - a map limited to Singapore, with pins and GPS accepted only on Singapore land,
