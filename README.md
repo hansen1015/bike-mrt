@@ -42,7 +42,7 @@ python extract_stations.py     # MRT/LRT station positions       -> data/station
 python build_mrt.py            # stations + links + travel times -> data/stations.json, mrt_edges.json
 python build_shapes.py         # snap links onto real track       -> data/mrt_shapes.json
 python build_land.py           # Singapore land outline (map limits, pin checks) -> frontend/data/sg_land.json
-python export_bikegraph.py     # compact bike graph               -> frontend/data/bg_*.bin
+python export_bikegraph.py     # compact bike graph (keeps the strongly connected core, so every pin can be left and entered) -> frontend/data/bg_*.bin
 copy data\stations.json data\mrt_edges.json data\mrt_shapes.json frontend\data\
 node build_matrix.mjs          # station-to-station cycling times -> frontend/data/bike_matrix.json
 python compress_data.py        # gzip the graph for publishing
@@ -54,7 +54,13 @@ Bump `VERSION` in `frontend/sw.js` after changing data so installed apps refresh
 
 ```
 node tests/fares.test.mjs     # fare bands, early-bird discount, 2026 fare review, peak detection
+node tests/routing.test.mjs   # places that must be routable (airport, checkpoints...), random trips
+node tests/version.test.mjs   # page, script and service worker carry the same build id
 ```
+
+## Releasing a new version
+
+Bump the build id in three places so an update never mixes old and new files: `<meta name="build">` in `frontend/index.html`, `BUILD` in `frontend/js/app.js` and `VERSION` in `frontend/sw.js` (`node tests/version.test.mjs` checks they match). If a phone ever ends up with mismatched files, the app shows a *Reload latest version* banner.
 
 ## Deploy
 

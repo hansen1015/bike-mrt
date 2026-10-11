@@ -116,6 +116,64 @@ size = collections.Counter(find(a) for a, b, *_ in edges for a in (a, b))
 keep = {r for r, n in size.items() if n >= 400}
 edges = [e for e in edges if find(e[0]) in keep]
 
+# keep only the largest STRONGLY connected part of the (one-way aware) graph: places you can both enter and leave.
+# Without this a pin can snap onto a one-way pocket (airport terminal loops, checkpoint approaches, car-park ramps)
+# from which no route exists in one direction, and the planner reports "no route".
+ids = {}
+for e in edges:
+    for r in (e[0], e[1]):
+        ids.setdefault(r, len(ids))
+n = len(ids)
+adj = [[] for _ in range(n)]
+for a_, b_, _, _, f_, bw_, _ in edges:
+    if f_:
+        adj[ids[a_]].append(ids[b_])
+    if bw_:
+        adj[ids[b_]].append(ids[a_])
+
+
+def largest_scc(n, adj):  # iterative Tarjan
+    index, low, comp = [-1] * n, [0] * n, [-1] * n
+    on, stack, counter, ncomp = [False] * n, [], 0, 0
+    sizes = []
+    for root in range(n):
+        if index[root] != -1:
+            continue
+        work = [(root, 0)]
+        while work:
+            v, i = work.pop()
+            if i == 0:
+                index[v] = low[v] = counter; counter += 1
+                stack.append(v); on[v] = True
+            recurse = False
+            while i < len(adj[v]):
+                w = adj[v][i]; i += 1
+                if index[w] == -1:
+                    work.append((v, i)); work.append((w, 0)); recurse = True
+                    break
+                elif on[w]:
+                    low[v] = min(low[v], index[w])
+            if recurse:
+                continue
+            if low[v] == index[v]:
+                size = 0
+                while True:
+                    w = stack.pop(); on[w] = False; comp[w] = ncomp; size += 1
+                    if w == v:
+                        break
+                sizes.append(size); ncomp += 1
+            if work:
+                u = work[-1][0]
+                low[u] = min(low[u], low[v])
+    return comp, sizes
+
+
+comp, sizes = largest_scc(n, adj)
+main = max(range(len(sizes)), key=lambda c: sizes[c])
+before = len(edges)
+edges = [e for e in edges if comp[ids[e[0]]] == main and comp[ids[e[1]]] == main]
+print(f"strongly connected core: {sizes[main]} of {n} nodes; edges {before} -> {len(edges)}")
+
 node_ids, node_xy = {}, []
 for a, b, *_ in edges:
     for r in (a, b):

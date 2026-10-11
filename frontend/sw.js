@@ -1,6 +1,6 @@
 // Bike-MRT service worker: makes the app installable and lets it open without signal.
 // Bump VERSION whenever the files in data/ change so phones re-download them.
-const VERSION = 'v6';
+const VERSION = 'v7';
 const CACHE = 'bike-mrt-' + VERSION;
 const SHELL = ['./', 'index.html', 'manifest.webmanifest', 'js/app.js', 'js/router.js', 'js/planner.js', 'js/fares.js', 'js/search.js', 'lib/leaflet.js', 'lib/leaflet.css',
   'icons/icon-192.png', 'icons/icon-512.png',
@@ -25,8 +25,11 @@ self.addEventListener('fetch', e => {
   const heavy = /\/(data|lib|icons)\//.test(url.pathname);
   e.respondWith(caches.open(CACHE).then(async cache => {
     const hit = await cache.match(e.request, { ignoreSearch: true });
-    // data/lib/icons: cache-first. Page and scripts: serve the cached copy but refresh it in the background.
-    const refresh = fetch(e.request.url, { cache: 'no-cache' }).then(r => { if (r.ok) cache.put(e.request, r.clone()); return r; }).catch(() => hit);
-    return hit ? (heavy ? hit : (refresh, hit)) : refresh;
+    if (heavy && hit) return hit;                                  // big files that rarely change: cache first
+    // The page and scripts: network first, so you always get one consistent, newest version when online (no mixing of old and
+    // new files); the cached copy is used offline or if the network is very slow.
+    const net = fetch(e.request.url, { cache: 'no-cache' }).then(r => { if (r.ok) cache.put(e.request, r.clone()); return r; });
+    if (!hit) return net;
+    return Promise.race([net.catch(() => hit), new Promise(res => setTimeout(() => res(hit), 4000))]);
   }));
 });

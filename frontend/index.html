@@ -4,6 +4,34 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <title>Bike-MRT</title>
+<meta name="build" content="v7">
+<script>
+  // safety net: if something breaks (for example after an update left old and new files mixed), show a banner with a one-tap fix
+  (function () {
+    var shown = false;
+    function fatal(msg) {
+      if (shown || /ResizeObserver/.test(msg || '')) return;
+      shown = true;
+      function add() {
+        var d = document.createElement('div'); d.id = 'fatal';
+        d.innerHTML = '<span><b>Something went wrong.</b> <small></small></span><button type="button">Reload latest version</button>';
+        d.querySelector('small').textContent = String(msg || '').slice(0, 120);
+        d.querySelector('button').onclick = function () { window.__bmRecover(); };
+        document.body.appendChild(d);
+      }
+      if (document.body) add(); else document.addEventListener('DOMContentLoaded', add);
+    }
+    window.__bmFatal = fatal;
+    window.__bmRecover = function () {
+      var p = [];
+      if (window.navigator.serviceWorker) p.push(navigator.serviceWorker.getRegistrations().then(function (rs) { return Promise.all(rs.map(function (r) { return r.unregister(); })); }));
+      if (window.caches) p.push(caches.keys().then(function (ks) { return Promise.all(ks.map(function (k) { return caches.delete(k); })); }));
+      Promise.all(p).catch(function () {}).then(function () { location.reload(); });
+    };
+    window.addEventListener('error', function (e) { fatal(e.message); });
+    window.addEventListener('unhandledrejection', function (e) { fatal(e.reason && e.reason.message ? e.reason.message : String(e.reason)); });
+  })();
+</script>
 <script>
   // apply the saved theme before first paint (avoids a light flash in dark mode)
   try {
@@ -85,6 +113,9 @@
   .leaflet-bar a:hover { background:var(--bg); }
   .leaflet-container .leaflet-control-attribution { background:color-mix(in srgb, var(--card) 80%, transparent); color:var(--mute); }
   .leaflet-control-attribution a { color:var(--accent); }
+  #fatal { position:fixed; left:12px; right:12px; bottom:12px; z-index:4000; display:flex; gap:12px; align-items:center; justify-content:space-between; background:var(--card); color:var(--ink); border:1px solid var(--mrt); border-radius:12px; padding:10px 12px; box-shadow:var(--shadow); font-size:14px; }
+  #fatal small { display:block; color:var(--mute); font-size:12px; }
+  #fatal button { margin:0; width:auto; padding:8px 12px; flex:none; font-size:13px; }
   #toast { position:fixed; left:50%; top:16px; transform:translate(-50%,-80px); background:var(--card); color:var(--ink); border:1px solid var(--mrt); border-radius:10px; padding:10px 14px; box-shadow:var(--shadow); z-index:3000; transition:transform .25s; max-width:90vw; font-size:14px; pointer-events:none; }
   #toast.show { transform:translate(-50%,0); }
 
@@ -145,7 +176,10 @@
     #side-body { padding:2px 12px calc(14px + env(safe-area-inset-bottom)); }
     .big { font-size:24px; }
     .leaflet-bottom { bottom:var(--sheetH, 50vh); } /* keep the map credit visible above the sheet */
-    #settings, #intro { align-items:stretch; } .sheet { border-radius:0; max-height:100dvh; width:100%; }
+    /* full-screen info screens: centred vertically when the screen is taller than the text, top-aligned and scrollable when shorter */
+    #settings, #intro { align-items:flex-start; overflow-y:auto; }
+    .sheet { border-radius:0; max-height:none; overflow:visible; width:100%; min-height:100%; }
+    .sheet.intro { display:flex; flex-direction:column; justify-content:center; min-height:100dvh; }
   }
 </style>
 </head>

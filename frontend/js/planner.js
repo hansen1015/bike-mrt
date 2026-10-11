@@ -54,10 +54,11 @@ export class Planner {
 
   plan(origin, dest, opts = {}) {
     const o = { ...DEFAULTS, ...opts };
+    for (const k of Object.keys(DEFAULTS)) if (typeof DEFAULTS[k] === 'number' && !Number.isFinite(o[k])) o[k] = DEFAULTS[k]; // never let a bad number poison the search
     const scale = BASE_SPEED / o.speed;
     const R = this.router, S = this.stations;
     const so = R.snap(origin.lat, origin.lon), sd = R.snap(dest.lat, dest.lon);
-    if (!so || !sd) throw new Error("Start or destination is outside Singapore's bike network");
+    if (!so || !sd) throw new Error(`No cycling roads near the ${!so ? 'start' : 'destination'}. It may be on a restricted island or in a closed area, so move the pin to a nearby road.`);
     const reach = Math.min(o.max_first_last_km, o.max_ride_km * 1.05); // straight-line pre-filter; exact km checked below
     const near = (p) => S.map(s => Router.dist([p.lat, p.lon], [s.lat, s.lon]) / 1000 <= reach);
     const nearO = near(origin), nearD = near(dest);
@@ -77,6 +78,10 @@ export class Planner {
     plans.sort((a, b) => a.total_min - b.total_min);
     if (plans.length) plans[0].label = "Fastest";
     plans.length = Math.min(plans.length, Math.max(1, Math.min(3, o.alternatives)));
+    if (!plans.length) { // say why, so the message can be specific
+      const startOk = !!direct || toStations.some(Boolean), destOk = !!direct || fromStations.some(Boolean);
+      plans.reason = !startOk ? 'start' : !destOk ? 'dest' : 'limits';
+    }
     plans.forEach(p => this._addGeometry(p, origin, dest, so, sd));
     return plans;
   }

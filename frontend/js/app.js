@@ -1,3 +1,5 @@
+// Keep BUILD in step with <meta name="build"> in index.html and VERSION in sw.js (tests/version.test.mjs checks it)
+const BUILD = 'v7';
 import { Router } from './router.js';
 import { Planner } from './planner.js';
 import { railFare, sgClock, timeInfo, polyKm, FARE_TYPES } from './fares.js';
@@ -5,6 +7,15 @@ import { searchPlaces } from './search.js';
 
 const $ = id => document.getElementById(id);
 const L = window.L;
+
+// If the page and this script come from different versions, clear the caches and reload once (instead of misbehaving)
+{
+  const pageBuild = document.querySelector('meta[name="build"]')?.content;
+  if (pageBuild !== BUILD) {
+    let tried = false; try { tried = sessionStorage.getItem('bm-recovered') === '1'; sessionStorage.setItem('bm-recovered', '1'); } catch (e) {}
+    if (!tried && window.__bmRecover) window.__bmRecover(); else if (window.__bmFatal) window.__bmFatal('Version mismatch (' + pageBuild + ' / ' + BUILD + ')');
+  }
+}
 
 // ================= settings (saved on this device) =================
 const STORE = 'bike-mrt-settings';
@@ -170,10 +181,14 @@ function drawNetwork() {
     L.polyline(e.coords, { pane: 'network', color: lineColor(e.line), weight: isLrt(e.line) ? 2.5 : 3.5, opacity: 1, interactive: false }).addTo(netLayer);
   });
   railData.stations.forEach(s => { // station names only (no dots), shown when zoomed in
-    L.marker([s.lat, s.lon], { pane: 'labels', interactive: false, icon: L.divIcon({ className: 'stn-label', html: s.name, iconSize: [0, 0], iconAnchor: [-5, 6] }) }).addTo(labelLayer);
+    L.marker([s.lat, s.lon], { pane: 'labels', interactive: false, icon: L.divIcon({ className: 'stn-label', html: s.name, iconSize: [0, 0], iconAnchor: [-5, 6] }), stn: s.name }).addTo(labelLayer);
   });
+  hideRouteNames();
   updateNetworkVisibility();
 }
+// station names that already have a dot + label on the selected route are not drawn a second time
+let routeDotNames = new Set();
+function hideRouteNames() { labelLayer.eachLayer(m => m.setOpacity(routeDotNames.has(m.options.stn) ? 0 : 1)); }
 function updateNetworkVisibility() {
   if (settings.showNet) netLayer.addTo(map); else map.removeLayer(netLayer);
   if (settings.showNet && settings.showLabels && map.getZoom() >= 14) labelLayer.addTo(map); else map.removeLayer(labelLayer);
@@ -353,9 +368,13 @@ async function runPlan() {
     await plannerReady;
     await new Promise(r => setTimeout(r, 30)); // let the "Planning…" text paint before the CPU-heavy search
     plans = planner.plan({ lat: picked.from.lat, lon: picked.from.lon }, { lat: picked.to.lat, lon: picked.to.lon }, planOptions());
-    if (!plans.length) throw new Error('No route found with these settings. Try a longer "Longest single ride" or enable more lines.');
+    if (!plans.length) {
+      const why = { start: "There is no way to cycle out of the start point (a restricted or closed area, or an island). Move pin A onto a nearby road.",
+                    dest: "There is no way to cycle into the destination (a restricted or closed area, or an island). Move pin B onto a nearby road." }[plans.reason];
+      throw new Error(why || 'No route found with these settings. Try a longer "Longest single ride" or enable more lines.');
+    }
     activePlan = 0; render(); show(0);
-  } catch (e) { plans = []; layer.clearLayers(); dimNetwork(false); out.innerHTML = '<div class="err">' + e.message + '</div>'; }
+  } catch (e) { plans = []; layer.clearLayers(); routeDotNames = new Set(); hideRouteNames(); dimNetwork(false); out.innerHTML = '<div class="err">' + e.message + '</div>'; }
   $('go').disabled = false;
 }
 $('go').onclick = runPlan;
@@ -379,6 +398,7 @@ function addFares() {
       if (l.mode === 'mrt') {
         l.railKm = l.segments.reduce((s, sg) => s + polyKm(sg.coords), 0);
         l.fare = railFare(l.railKm, { type: settings.fareType, earlyBird: t.weekday && c.minutes + elapsed < 7 * 60 + 45, date: c.iso });
+        if (!(l.fare >= 0)) l.fare = 0;
         total += l.fare;
       }
       elapsed += l.min;
@@ -406,10 +426,18 @@ function render() {
   document.querySelectorAll('.gbtn').forEach(a => a.onclick = e => e.stopPropagation());
 }
 
+// circle split into two halves, one per line colour
+function splitIcon(c1, c2, edge) {
+  const r = 9, w = 2 * r + 6, m = w / 2;
+  return L.divIcon({ className: '', iconSize: [w, w], iconAnchor: [m, m],
+    html: `<svg width="${w}" height="${w}" viewBox="0 0 ${w} ${w}" aria-hidden="true"><path d="M${m} ${m - r} A${r} ${r} 0 0 0 ${m} ${m + r} Z" fill="${c1}"/><path d="M${m} ${m - r} A${r} ${r} 0 0 1 ${m} ${m + r} Z" fill="${c2}"/><circle cx="${m}" cy="${m}" r="${r}" fill="none" stroke="${edge}" stroke-width="3"/></svg>` });
+}
+
 function show(i) {
   activePlan = i;
   document.querySelectorAll('.plan').forEach((el, j) => el.classList.toggle('active', i === j));
   layer.clearLayers(); const pts = [];
+  routeDotNames = new Set();
   dimNetwork(true);
   const casing = css('--casing'), fill = isDark() ? '#1d2125' : '#fff', bike = css('--bike');
   plans[i].legs.forEach(l => {
@@ -417,19 +445,29 @@ function show(i) {
       L.polyline(l.coords, { pane: 'route', color: casing, weight: 9 }).addTo(layer);
       L.polyline(l.coords, { pane: 'route', color: bike, weight: 5 }).addTo(layer); pts.push(...l.coords);
     } else {
-      l.segments.forEach(sg => {
+      l.segments.forEach((sg, si) => {
         const col = lineColor(sg.line);
         L.polyline(sg.coords, { pane: 'route', color: casing, weight: 11 }).addTo(layer);
         L.polyline(sg.coords, { pane: 'route', color: col, weight: 7 }).addTo(layer);
-        // a dot only where you board, change line or get off (the ends of each ride), none for the stops in between
-        [0, sg.stop_pts.length - 1].forEach(k => {
-          L.circleMarker(sg.stop_pts[k], { pane: 'route', radius: 8, color: col, weight: 4, fillColor: fill, fillOpacity: 1 })
-            .bindTooltip(sg.stop_names[k], { permanent: true, direction: 'right', offset: [8, 0] }).addTo(layer);
-        });
         pts.push(...sg.coords);
       });
+      // dots only where you board, change line or get off. A line change is a circle split in two colours:
+      // left half = the line you arrive on, right half = the line you leave on. No dots for the stops in between.
+      const segs = l.segments, last = segs.length - 1;
+      const ring = (p, name, col) => L.circleMarker(p, { pane: 'labels', radius: 8, color: col, weight: 4, fillColor: fill, fillOpacity: 1 })
+        .bindTooltip(name, { permanent: true, direction: 'right', offset: [8, 0] }).addTo(layer);
+      ring(segs[0].stop_pts[0], segs[0].stop_names[0], lineColor(segs[0].line));
+      for (let si = 0; si < last; si++) {
+        const a = lineColor(segs[si].line), b = lineColor(segs[si + 1].line), p = segs[si].stop_pts[segs[si].stop_pts.length - 1];
+        const tip = `<b>${segs[si].stop_names[segs[si].stop_names.length - 1]}</b><br>${lineLabel(segs[si].line)} → ${lineLabel(segs[si + 1].line)}`;
+        L.marker(p, { pane: 'labels', icon: splitIcon(a, b, casing), keyboard: false }).bindTooltip(tip, { permanent: true, direction: 'right', offset: [14, 0] }).addTo(layer);
+      }
+      ring(segs[last].stop_pts[segs[last].stop_pts.length - 1], segs[last].stop_names[segs[last].stop_names.length - 1], lineColor(segs[last].line));
+      routeDotNames.add(segs[0].stop_names[0]); routeDotNames.add(segs[last].stop_names[segs[last].stop_names.length - 1]);
+      for (let si = 0; si < last; si++) routeDotNames.add(segs[si].stop_names[segs[si].stop_names.length - 1]);
     }
   });
+  hideRouteNames();
   routeBounds = L.latLngBounds(pts);
   if (sheetState === 'full') setSheet('half'); // reading the list at full height: drop to half so the route is visible
   fitToSheet(routeBounds);
