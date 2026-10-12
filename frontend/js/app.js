@@ -1,5 +1,5 @@
 // Keep BUILD in step with <meta name="build"> in index.html and VERSION in sw.js (tests/version.test.mjs checks it)
-const BUILD = 'v12';
+const BUILD = 'v13';
 import { Router } from './router.js';
 import { Planner } from './planner.js';
 import { railFare, sgClock, timeInfo, polyKm, FARE_TYPES } from './fares.js';
@@ -867,7 +867,7 @@ const saveFavs = () => { try { localStorage.setItem(FAV_KEY, JSON.stringify(favs
 const favNear = p => p && favs.find(f => navDist([f.lat, f.lon], [p.lat, p.lon]) < 40);
 function updateFavStar() {
   const on = !!favNear(picked.to), b = $('fav-to');
-  b.textContent = on ? '★' : '☆'; b.classList.toggle('on', on); b.title = on ? 'Remove from favourites' : 'Save as a favourite';
+  b.classList.toggle('on', on); b.setAttribute('aria-pressed', on); b.title = on ? 'Remove from favourites' : 'Save as a favourite';
 }
 function renderFavs() {
   $('favs').hidden = !favs.length;
