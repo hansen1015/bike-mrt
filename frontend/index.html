@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <title>Bike-MRT</title>
-<meta name="build" content="v11">
+<meta name="build" content="v12">
 <script>
   // safety net: if something breaks (for example after an update left old and new files mixed), show a banner with a one-tap fix
   (function () {
@@ -95,6 +95,12 @@
   .tag { flex:none; width:44px; text-align:center; border-radius:5px; color:#fff; font-size:11px; font-weight:700; padding:2px 0; height:fit-content; }
   .tag.bike { background:var(--bike); } .tag.mrt { background:var(--mrt); }
   [hidden] { display:none !important; }
+  #fav-to { font-size:22px; } #fav-to.on { background:var(--card); color:#e7a600; }
+  #favs { margin-top:12px; } .favhead { display:flex; justify-content:space-between; align-items:center; } .favhead label { margin:0; }
+  .linkbtn { margin:0; width:auto; padding:0; background:none; color:var(--accent); font-size:13px; font-weight:700; }
+  #favlist { display:flex; flex-wrap:wrap; gap:8px; margin-top:7px; }
+  .favchip { margin:0; width:auto; padding:8px 13px; border-radius:18px; background:var(--card); color:var(--ink); border:1px solid var(--line); font-size:14px; font-weight:600; display:inline-flex; gap:8px; align-items:center; }
+  .favchip.edit { border-color:var(--mrt); } .favchip i { font-style:normal; color:var(--mrt); }
   .startbtn { margin-top:12px; padding:12px; font-size:16px; }
   @keyframes spin { to { transform:rotate(360deg); } }
   .pinbtn.loading { position:relative; color:transparent; pointer-events:none; }
@@ -244,9 +250,10 @@
     <button class="icon" id="open-settings" title="Settings" aria-label="Settings">⚙️</button>
   </div>
   <label>From</label>
-  <div class="field pin"><div class="inwrap"><input type="text" id="from" value="NTU Binjai Hall" placeholder="Where from?" autocomplete="off" enterkeyhint="search"><button type="button" class="clear" data-clear="from" aria-label="Clear start">✕</button></div><button class="pinbtn" id="gps-from" title="Use my current location">🎯</button><button class="pinbtn" id="pin-from" title="Pick on map">📍</button><div class="sugg" id="sugg-from"></div></div>
+  <div class="field pin"><div class="inwrap"><input type="text" id="from" placeholder="Where from? (your location)" autocomplete="off" enterkeyhint="search"><button type="button" class="clear" data-clear="from" aria-label="Clear start">✕</button></div><button class="pinbtn" id="gps-from" title="Use my current location">🎯</button><button class="pinbtn" id="pin-from" title="Pick on map">📍</button><div class="sugg" id="sugg-from"></div></div>
   <label>To</label>
-  <div class="field pin"><div class="inwrap"><input type="text" id="to" placeholder="Building, business, address or MRT station" autocomplete="off" enterkeyhint="search"><button type="button" class="clear" data-clear="to" aria-label="Clear destination">✕</button></div><button class="pinbtn" id="pin-to" title="Pick on map">📍</button><div class="sugg" id="sugg-to"></div></div>
+  <div class="field pin"><div class="inwrap"><input type="text" id="to" placeholder="Building, business, address or MRT station" autocomplete="off" enterkeyhint="search"><button type="button" class="clear" data-clear="to" aria-label="Clear destination">✕</button></div><button class="pinbtn" id="fav-to" title="Save as a favourite" aria-label="Save as a favourite">☆</button><button class="pinbtn" id="pin-to" title="Pick on map">📍</button><div class="sugg" id="sugg-to"></div></div>
+  <div id="favs" hidden><div class="favhead"><label>Favourites</label><button type="button" class="linkbtn" id="fav-edit">Edit</button></div><div id="favlist"></div></div>
   <button id="go">Find fastest route</button>
   <div id="out"></div>
   </div>
@@ -287,7 +294,7 @@
       <div><h2>Welcome to Bike-MRT</h2><p>Plan the fastest commute with your trifold bicycle and the MRT/LRT in Singapore.</p></div>
     </div>
     <ol class="steps">
-      <li><span><b>Choose where from and to.</b> Type an address or postal code, tap 📍 and then the map, or press 🎯 to start from where you are. Pins can be dragged.</span></li>
+      <li><span><b>Choose where from and to.</b> The start is <b>your location</b> by default (the app asks for it when it opens). Type an address, business or station for the destination, tap 📍 and then the map, or pick a <b>favourite</b>: tap ☆ next to the destination to save it, and it shows on the home page. Pins can be dragged.</span></li>
       <li><span><b>Tap “Find fastest route”.</b> The app compares cycling the whole way, taking trains, and mixes of both, even cycle → train → cycle → train → cycle.</span></li>
       <li><span><b>Read the plan.</b> Green <b>BIKE</b> legs are cycling, coloured <b>MRT</b> / <b>LRT</b> legs are trains, with an estimated fare and the station exits to enter and leave by. Tap a plan to see it on the map.</span></li>
       <li><span><b>Navigate each ride.</b> Tap <b>Start navigation</b>: follow the map and the turn-by-turn directions while you cycle, then step through the MRT directions with the arrows and carry on cycling.</span></li>
@@ -306,6 +313,11 @@
 <div id="settings" aria-modal="true" role="dialog" aria-label="Settings">
   <div class="sheet">
     <header><h2>Settings</h2><button class="icon" id="close-settings" aria-label="Close">✕</button></header>
+
+    <section>
+      <h3>Start</h3>
+      <div class="opt"><div class="t">Start from my location<small>Asks for your location when the app opens, and uses where you are when you plan or start navigating</small></div><label class="switch"><input type="checkbox" data-key="gpsStart"><span></span></label></div>
+    </section>
 
     <section>
       <h3>Appearance</h3>

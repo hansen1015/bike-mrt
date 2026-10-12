@@ -1,5 +1,5 @@
 // Keep BUILD in step with <meta name="build"> in index.html and VERSION in sw.js (tests/version.test.mjs checks it)
-const BUILD = 'v11';
+const BUILD = 'v12';
 import { Router } from './router.js';
 import { Planner } from './planner.js';
 import { railFare, sgClock, timeInfo, polyKm, FARE_TYPES } from './fares.js';
@@ -25,7 +25,7 @@ const DEFAULT_SETTINGS = {
   theme: 'auto', showNet: true, showLabels: true,
   speed: 16, maxRide: 15, allowMid: true, bikePen: 1,
   lines: ['NS', 'EW', 'NE', 'CC', 'DT', 'TE', 'BP', 'SK', 'PG'],
-  fold: 2.5, alight: 2, transferAdj: 0, transferPen: 0, depart: 'now', showFares: true, fareType: 'adult', alts: 3,
+  fold: 2.5, alight: 2, transferAdj: 0, transferPen: 0, depart: 'now', showFares: true, fareType: 'adult', alts: 3, gpsStart: true,
 };
 // chip key -> actual line codes in the data (the airport branch rides with East-West, each LRT system has two loops)
 const LINE_GROUPS = { NS: ['NS'], EW: ['EW', 'CG'], NE: ['NE'], CC: ['CC'], DT: ['DT'], TE: ['TE'], BP: ['BP'], SK: ['SE', 'SW'], PG: ['PE', 'PW'] };
@@ -33,6 +33,10 @@ let settings = { ...DEFAULT_SETTINGS };
 try { settings = { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem(STORE) || '{}') }; } catch (e) {}
 settings.depart = 'now'; // "Leaving" always starts at Now
 if (!['adult', 'student', 'senior'].includes(settings.fareType)) settings.fareType = 'adult';
+// favourite destinations (saved on this device)
+const FAV_KEY = 'bike-mrt-favs';
+let favs = [], favEdit = false;
+try { favs = (JSON.parse(localStorage.getItem(FAV_KEY) || '[]') || []).filter(f => f && f.name && Number.isFinite(f.lat) && Number.isFinite(f.lon)).slice(0, 20); } catch (e) {}
 const saveSettings = () => { try { const { depart, ...keep } = settings; localStorage.setItem(STORE, JSON.stringify(keep)); } catch (e) {} };
 
 if ('serviceWorker' in navigator) {
@@ -204,7 +208,7 @@ dataReady.then(([, , , stations, edges, shapes]) => {
 const dimNetwork = on => { map.getPane('network').style.opacity = on ? 0.3 : 1; };
 
 // ================= pins (A = start, B = destination) =================
-const picked = { from: { lat: 1.353820, lon: 103.688243 }, to: null };
+const picked = { from: null, to: null };   // the start is your location (see useMyLocation) unless you choose another
 const markers = {}, lastGood = {};
 const layer = L.layerGroup().addTo(map);
 
@@ -223,6 +227,7 @@ function setPoint(key, lat, lon, pan) {
     });
   } else markers[key].setLatLng([lat, lon]);
   if (pan) revealPoint(lat, lon);
+  if (key === 'to') updateFavStar();
   return true;
 }
 
@@ -248,35 +253,54 @@ map.on('click', e => {
   if (setPoint(key, e.latlng.lat, e.latlng.lng)) $(key).value = 'Pin (' + e.latlng.lat.toFixed(5) + ', ' + e.latlng.lng.toFixed(5) + ')';
   if (picking) setPicking(picking);
 });
-setPoint('from', picked.from.lat, picked.from.lon);
 
-// start from the phone's GPS position, with a spinner on the button while we wait
-let locating = false;
-$('gps-from').onclick = () => {
+// ---- the start is your location by default ----
+// One shared lookup (a spinner on the button while we wait). Returns a promise: true when the start was set.
+let locateJob = null;
+function useMyLocation() {
+  if (locateJob) return locateJob;
   const btn = $('gps-from'), input = $('from');
-  if (locating) return;
-  if (!navigator.geolocation) { toast('GPS is not available on this device'); return; }
-  const before = input.value;
-  const done = () => { locating = false; btn.classList.remove('loading'); btn.removeAttribute('aria-busy'); btn.disabled = false; input.classList.remove('locating'); };
-  locating = true; btn.classList.add('loading'); btn.setAttribute('aria-busy', 'true'); btn.disabled = true;
+  if (!navigator.geolocation) { toast('GPS is not available on this device'); return Promise.resolve(false); }
+  const before = input.value.startsWith('Finding') ? '' : input.value;
+  const done = () => { btn.classList.remove('loading'); btn.removeAttribute('aria-busy'); btn.disabled = false; input.classList.remove('locating'); };
+  btn.classList.add('loading'); btn.setAttribute('aria-busy', 'true'); btn.disabled = true;
   input.value = 'Finding your location…'; input.classList.add('locating');
-  navigator.geolocation.getCurrentPosition(pos => {
+  locateJob = new Promise(resolve => navigator.geolocation.getCurrentPosition(pos => {
     done();
     const { latitude: lat, longitude: lon, accuracy } = pos.coords;
-    if (!setPoint('from', lat, lon, true)) { input.value = before; toast('You seem to be outside Singapore, so pick a start on the map instead'); return; }
+    if (!setPoint('from', lat, lon)) { input.value = before; toast('You seem to be outside Singapore, so pick a start on the map instead'); resolve(false); return; }
     input.value = 'My location (±' + Math.round(accuracy) + ' m)';
     revealPoint(lat, lon, Math.max(map.getZoom(), 15));
+    resolve(true);
   }, err => {
     done(); input.value = before;
-    toast(err.code === 1 ? 'Location permission denied: allow it in your browser settings' : 'Could not get your location, try again or pick on the map');
-  }, { enableHighAccuracy: true, timeout: 20000, maximumAge: 10000 });
-};
+    toast(err.code === 1 ? 'Location is off. Allow it in your browser settings, or choose a start' : 'Could not get your location. Try again, or choose a start');
+    resolve(false);
+  }, { enableHighAccuracy: true, timeout: 20000, maximumAge: 10000 })).finally(() => { locateJob = null; });
+  return locateJob;
+}
+$('gps-from').onclick = () => { useMyLocation(); };
 
-// ---- place search: stations + OneMap buildings + OpenStreetMap businesses, with keyboard support ----
+// when planning or starting to navigate, a "My location" start is refreshed to where you are right now
+const fromIsGps = () => $('from').value.startsWith('My location');
+async function freshStart(maxAge = 15000) { // maxAge 0 = a brand new reading, never a remembered one
+  if (!fromIsGps() || !navigator.geolocation) return;
+  try {
+    const pos = await new Promise((ok, no) => navigator.geolocation.getCurrentPosition(ok, no, { enableHighAccuracy: true, timeout: 6000, maximumAge: maxAge }));
+    const { latitude: lat, longitude: lon, accuracy } = pos.coords;
+    if (onLand(lat, lon)) {
+      picked.from = { lat, lon }; lastGood.from = [lat, lon];
+      if (markers.from) markers.from.setLatLng([lat, lon]);
+      $('from').value = 'My location (±' + Math.round(accuracy) + ' m)';
+    }
+  } catch (e) { /* keep the position we already have */ }
+}
+
 const searchCache = new Map();
 function clearPoint(key) {
   if (markers[key]) { markers[key].remove(); delete markers[key]; }
   picked[key] = null; lastGood[key] = null;
+  if (key === 'to') updateFavStar();
 }
 function wireSearch(key) {
   const input = $(key), box = $('sugg-' + key), wrap = input.parentElement;
@@ -377,8 +401,12 @@ const planOptions = () => ({
 
 async function runPlan() {
   const out = $('out');
-  if (!picked.from || !picked.to) { out.innerHTML = '<div class="err">Pick a destination: type an address or tap the map.</div>'; return; }
-  $('go').disabled = true; out.innerHTML = planner ? '<p>Planning…</p>' : '<p>Loading map data (first time only)…</p>';
+  if (!picked.to) { out.innerHTML = '<div class="err">Pick a destination: type an address or tap the map, or choose a favourite.</div>'; return; }
+  $('go').disabled = true;
+  if (!picked.from && settings.gpsStart) { out.innerHTML = '<p>Getting your location…</p>'; await useMyLocation(); }
+  else if (fromIsGps()) { out.innerHTML = '<p>Getting your location…</p>'; await freshStart(); }
+  if (!picked.from) { out.innerHTML = '<div class="err">Choose where to start: allow your location, or type a start address.</div>'; $('go').disabled = false; return; }
+  out.innerHTML = planner ? '<p>Planning…</p>' : '<p>Loading map data (first time only)…</p>';
   try {
     await plannerReady;
     await new Promise(r => setTimeout(r, 30)); // let the "Planning…" text paint before the CPU-heavy search
@@ -526,7 +554,8 @@ document.querySelectorAll('[data-key]').forEach(el => {
     settings[key] = v; saveSettings();
     const out = document.querySelector(`[data-out="${key}"]`);
     if (out) out.textContent = key === 'bikePen' ? v.toFixed(1) + '×' : v + ' min';
-    if (key === 'showNet' || key === 'showLabels') updateNetworkVisibility();
+    if (key === 'gpsStart') { if (v && !picked.from) useMyLocation(); }
+    else if (key === 'showNet' || key === 'showLabels') updateNetworkVisibility();
     else if (key === 'showFares' || key === 'fareType') { if (plans.length) { render(); show(activePlan); } }
     else replanSoon();
   };
@@ -626,8 +655,17 @@ function buildPhases(plan) {
 async function lockScreen() { try { if ('wakeLock' in navigator && nav.on) nav.wake = await navigator.wakeLock.request('screen'); } catch (e) {} }
 document.addEventListener('visibilitychange', () => { if (nav.on && document.visibilityState === 'visible') lockScreen(); });
 
-function startNav(i, keepWatch = false) {
+async function startNav(i, keepWatch = false) {
   if (!plans[i] || !railData) return;
+  if (!keepWatch && fromIsGps()) {
+    const was = picked.from; await freshStart(0);
+    if (was && picked.from && navDist([was.lat, was.lon], [picked.from.lat, picked.from.lon]) > 80) {   // you have moved since the plan was made
+      toast('Updating the route from where you are…');
+      const label = plans[i].label; await runPlan();
+      const k = plans.findIndex(p => p.label === label); i = k >= 0 ? k : plans.length - 1;
+      if (!plans[i]) return;
+    }
+  }
   show(i);
   nav.on = true; nav.plan = plans[i]; nav.done = false;
   if (!keepWatch) { nav.rec = new Recorder(); nav.title = rideTitle(); }   // a re-route keeps the original title
@@ -823,6 +861,43 @@ $('nav-reroute').onclick = () => { // plan again from where you are now, to the 
     plans = np; activePlan = 0; render(); startNav(0, true); toast('New route found');
   } catch (e) { toast('Could not find a new route from here'); }
 };
+
+// ================= favourite destinations =================
+const saveFavs = () => { try { localStorage.setItem(FAV_KEY, JSON.stringify(favs)); } catch (e) {} };
+const favNear = p => p && favs.find(f => navDist([f.lat, f.lon], [p.lat, p.lon]) < 40);
+function updateFavStar() {
+  const on = !!favNear(picked.to), b = $('fav-to');
+  b.textContent = on ? '★' : '☆'; b.classList.toggle('on', on); b.title = on ? 'Remove from favourites' : 'Save as a favourite';
+}
+function renderFavs() {
+  $('favs').hidden = !favs.length;
+  $('fav-edit').textContent = favEdit ? 'Done' : 'Edit';
+  $('favlist').innerHTML = '';
+  favs.forEach(f => {
+    const b = document.createElement('button'); b.type = 'button'; b.className = 'favchip' + (favEdit ? ' edit' : '');
+    b.innerHTML = `<span>⭐ ${esc(f.name)}</span>` + (favEdit ? '<i aria-label="Remove">✕</i>' : '');
+    b.onclick = () => { if (favEdit) { favs = favs.filter(x => x !== f); saveFavs(); if (!favs.length) favEdit = false; renderFavs(); } else useFav(f); };
+    $('favlist').appendChild(b);
+  });
+  updateFavStar();
+}
+function useFav(f) { // one tap: the destination is set and the routes appear
+  $('to').value = f.name;
+  if (setPoint('to', f.lat, f.lon, true)) { setSheet('half'); runPlan(); }
+}
+$('fav-to').onclick = () => {
+  if (!picked.to) { toast('Choose a destination first, then tap ☆ to save it'); return; }
+  const have = favNear(picked.to);
+  if (have) { if (confirm(`Remove "${have.name}" from your favourites?`)) { favs = favs.filter(x => x !== have); saveFavs(); renderFavs(); } return; }
+  if (favs.length >= 20) { toast('You can keep up to 20 favourites'); return; }
+  const raw = $('to').value.trim();
+  const name = (prompt('Name this favourite (for example Home or Work)', /^Pin \(/.test(raw) ? '' : raw.slice(0, 30)) || '').trim().slice(0, 30);
+  if (!name) return;
+  favs.push({ name, lat: picked.to.lat, lon: picked.to.lon }); saveFavs(); renderFavs(); toast('Saved to favourites');
+};
+$('fav-edit').onclick = () => { favEdit = !favEdit; renderFavs(); };
+renderFavs();
+if (settings.gpsStart) useMyLocation();   // navigate from where you are by default
 
 // ================= feedback e-mail =================
 // assembled here (not written in the HTML) so it is not sitting in the page for address scrapers

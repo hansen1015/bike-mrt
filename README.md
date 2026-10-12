@@ -14,7 +14,8 @@ Fastest door-to-door commute planner for a **trifold bicycle + MRT/LRT** in Sing
 - a **settings page**: light / dark / auto theme (dark mode also darkens the map), cycling speed, longest single ride, cycling between stations on/off, "prefer trains over cycling", pick which MRT/LRT lines to use, a departure time (peak or off-peak is worked out from the time and day), fold and unfold times, extra time per line change, avoid-transfers, number of plans (saved on your device),
 - a feedback button (opens an email),
 - a map limited to Singapore, with pins and GPS accepted only on Singapore land,
-- start from your **GPS location** (the 🎯 button), a searched address, or a pin dropped on the map.
+- **starts from your GPS location by default**: the app asks for your location when it opens and sets "My location" as the start. When you plan, or start navigating, it takes a fresh reading, and if you have moved more than 80 m since the plan was made it plans again from where you are. You can still type another start, drop a pin, or switch the behaviour off in Settings (*Start from my location*),
+- **favourite destinations**: tap ☆ next to the destination to save it under a name (for example Home or Work). Favourites are shown on the home page; one tap on a favourite sets the destination and shows the routes. *Edit* removes them. They are kept on your device (up to 20).
 
 Everything runs **in your browser**: there is no backend. It is a static site that can be hosted for free (GitHub Pages) and installed on a phone as an app (PWA: open the site, then "Add to Home Screen").
 
