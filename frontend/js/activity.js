@@ -54,6 +54,18 @@ export class Recorder {
     });
   }
 
+  // save / restore a ride that is in progress (the app was closed and opened again). A leg that was open is treated as closed at
+  // its last point; carrying on starts a new leg, so the time the app was closed shows up as a pause and no distance jumps.
+  snapshot() {
+    return { legs: this.legs.filter(l => l.pts.length).map(l => ({ s: l.start, e: Math.max(l.end, l.pts[l.pts.length - 1].t),
+      p: l.pts.map(p => [p.t, +p.lat.toFixed(6), +p.lon.toFixed(6), p.alt == null ? null : +p.alt.toFixed(1), p.spd == null ? null : +p.spd.toFixed(2)]) })) };
+  }
+  static restore(snap) {
+    const r = new Recorder();
+    for (const l of (snap && snap.legs) || []) r.legs.push({ start: l.s, end: l.e, pts: l.p.map(a => ({ t: a[0], lat: a[1], lon: a[2], alt: a[3], spd: a[4] })) });
+    return r;
+  }
+
   get usable() { return this.legs.some(l => l.pts.length >= 2); }
 
   stats() {

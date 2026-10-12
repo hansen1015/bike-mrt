@@ -1,5 +1,5 @@
 // Keep BUILD in step with <meta name="build"> in index.html and VERSION in sw.js (tests/version.test.mjs checks it)
-const BUILD = 'v15';
+const BUILD = 'v16';
 import { Router } from './router.js';
 import { Planner } from './planner.js';
 import { railFare, sgClock, timeInfo, polyKm, FARE_TYPES } from './fares.js';
@@ -656,9 +656,9 @@ function buildPhases(plan) {
 async function lockScreen() { try { if ('wakeLock' in navigator && nav.on) nav.wake = await navigator.wakeLock.request('screen'); } catch (e) {} }
 document.addEventListener('visibilitychange', () => { if (nav.on && document.visibilityState === 'visible') lockScreen(); });
 
-async function startNav(i, keepWatch = false) {
+async function startNav(i, keepWatch = false, resume = null) {
   if (!plans[i] || !railData) return;
-  if (!keepWatch && fromIsGps()) {
+  if (!keepWatch && !resume && fromIsGps()) {
     const was = picked.from; await freshStart(0);
     if (was && picked.from && navDist([was.lat, was.lon], [picked.from.lat, picked.from.lon]) > 80) {   // you have moved since the plan was made
       toast('Updating the route from where you are…');
@@ -669,14 +669,60 @@ async function startNav(i, keepWatch = false) {
   }
   show(i);
   nav.on = true; nav.plan = plans[i]; nav.done = false;
-  if (!keepWatch) { nav.rec = new Recorder(); nav.title = rideTitle(); }   // a re-route keeps the original title
+  if (resume) { nav.rec = Recorder.restore(resume.rec); nav.title = resume.title; }
+  else if (!keepWatch) { nav.rec = new Recorder(); nav.title = rideTitle(); }   // a re-route keeps the original title
   nav.phases = buildPhases(nav.plan);
   document.body.classList.add('navigating'); $('nav').hidden = false;
   document.documentElement.style.setProperty('--sheetH', '86px');
   map.getPane('route').style.opacity = 0.35;
   if (!keepWatch) startWatch();
   lockScreen();
-  enterPhase(0);
+  savePlan();
+  if (resume && resume.done) finishNav({ download: false }); else enterPhase(resume ? resume.i : 0);
+  if (resume) applyResume(resume);
+  saveNavState(true);
+}
+
+// ---- keep the navigation when the app is closed: it is saved on the device and picked up again when the app opens ----
+const NAV_KEY = 'bike-mrt-nav', NAV_PLAN_KEY = 'bike-mrt-nav-plan', NAV_MAX_AGE = 12 * 3600 * 1000;
+let lastNavSave = 0;
+function saveNavState(force = false) {            // small state + the GPS points so far (throttled; forced on every step change and when the page is hidden)
+  if (!nav.on) return;
+  const now = Date.now();
+  if (!force && now - lastNavSave < 8000) return;
+  lastNavSave = now;
+  try {
+    localStorage.setItem(NAV_KEY, JSON.stringify({ v: 1, saved: now, i: nav.i, along: nav.along, arrived: nav.arrived, cardI: nav.cardI, done: nav.done, headingUp: nav.headingUp,
+      title: nav.title, from: $('from').value, to: $('to').value, pf: picked.from, pt: picked.to, rec: nav.rec.snapshot() }));
+  } catch (e) { /* storage full or blocked: carry on without saving */ }
+}
+function savePlan() { try { localStorage.setItem(NAV_PLAN_KEY, JSON.stringify(nav.plan)); } catch (e) {} }
+function clearNavSession() { try { localStorage.removeItem(NAV_KEY); localStorage.removeItem(NAV_PLAN_KEY); } catch (e) {} }
+function hasNavSession() {
+  try { const s = JSON.parse(localStorage.getItem(NAV_KEY) || 'null'); return !!s && Date.now() - s.saved < NAV_MAX_AGE && !!localStorage.getItem(NAV_PLAN_KEY); } catch (e) { return false; }
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') saveNavState(true); });
+window.addEventListener('pagehide', () => saveNavState(true));
+
+function applyResume(r) {
+  const ph = nav.phases[nav.i];
+  if (ph && ph.type === 'bike') {
+    nav.along = Math.max(nav.along, r.along || 0);
+    if (r.arrived) { nav.arrived = true; $('nav-arrived').classList.add('attn'); }
+    updateBike();
+  } else if (ph && ph.type === 'rail') { nav.cardI = Math.max(0, Math.min(r.cardI || 0, nav.cards.length - 1)); renderRail(); }
+  if (r.headingUp) setHeadingUp(true);
+  toast('Navigation resumed');
+}
+async function resumeNav() {
+  let st = null, plan = null;
+  try { st = JSON.parse(localStorage.getItem(NAV_KEY)); plan = JSON.parse(localStorage.getItem(NAV_PLAN_KEY)); } catch (e) {}
+  if (!st || !plan || Date.now() - st.saved > NAV_MAX_AGE) { clearNavSession(); return; }
+  await dataReady;
+  if (st.pf) { setPoint('from', st.pf.lat, st.pf.lon); $('from').value = st.from; }   // the planning screen as it was
+  if (st.pt) { setPoint('to', st.pt.lat, st.pt.lon); $('to').value = st.to; }
+  plans = [plan]; activePlan = 0; render();
+  startNav(0, false, st);
 }
 
 function startWatch() {
@@ -718,6 +764,7 @@ function onFix(pos) {
   const ph = nav.phases[nav.i];
   if (!ph || ph.type !== 'bike') return;
   nav.rec.addFix({ t: pos.timestamp, lat, lon, acc: accuracy, alt: pos.coords.altitude, speed: pos.coords.speed });
+  saveNavState();
   const f = locate(ph.g, lat, lon, nav.along);
   if (f.cross <= Math.max(45, accuracy * 1.2)) { nav.offCount = 0; nav.along = Math.max(nav.along, f.along); $('nav-off').hidden = true; }
   else if (!nav.arrived && accuracy < 80 && ++nav.offCount >= 3) $('nav-off').hidden = false;
@@ -727,7 +774,7 @@ function onFix(pos) {
     if (!nav.arrived) {                                     // at the station or the destination: keep recording until you press the button
       nav.arrived = true; $('nav-arrived').classList.add('attn'); $('nav-off').hidden = true;
       toast(ph.toRide ? 'You are at the station. Still recording: press Pause & MRT when you go in' : 'You have arrived. Still recording: press Stop & save when you are done');
-      updateBike();
+      updateBike(); saveNavState(true);
     }
   }
   if (nav.follow) followPos(lat, lon);
@@ -775,7 +822,7 @@ function enterPhase(idx) {
   }
 }
 
-const nextPhase = () => enterPhase(nav.i + 1);
+const nextPhase = () => { enterPhase(nav.i + 1); saveNavState(true); };
 
 // ---- the ride as an activity file for Strava ----
 const sgStamp = ms => {
@@ -805,7 +852,7 @@ function downloadRide(kind) {
 const copyTitle = () => { const t = nav.title || 'Commute'; (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(() => toast('Title copied'), () => toast(t)); };
 const fmtHms = s => { s = Math.round(s); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60); return h ? `${h} h ${m} min` : `${m} min ${s % 60} s`; };
 
-function finishNav() {
+function finishNav({ download = true } = {}) {
   $('nav-top').hidden = true; $('nav-bottom').hidden = true; $('nav-fabs').hidden = true;
   nav.rec.endLeg();
   const st = nav.rec.stats(), ok = nav.rec.usable;
@@ -815,8 +862,9 @@ function finishNav() {
               : ['Safe riding!', 'No GPS track was recorded (GPS was off or had no signal), so there is no file to save.'],
     chips: ok ? [`${(st.distance / 1000).toFixed(1)} km`, `${fmtHms(st.moving)} moving`, `${st.legs} cycling ${st.legs === 1 ? 'leg' : 'legs'}`] : [],
     actions: ok ? [{ label: 'Open Strava upload ↗', href: 'https://www.strava.com/upload/select' }, { label: 'Copy title', run: copyTitle }, { label: 'Save .fit again', run: () => downloadRide('fit') }, { label: 'GPX version', run: () => downloadRide('gpx') }] : [] }];
-  if (ok) { try { downloadRide('fit'); } catch (e) { toast('Could not save the ride file'); } }  // downloads by itself when you arrive
+  if (ok && download) { try { downloadRide('fit'); } catch (e) { toast('Could not save the ride file'); } }  // downloads when you press Stop & save
   renderRail(); $('rail').hidden = false;
+  saveNavState(true);
 }
 
 // ---- train step cards ----
@@ -842,7 +890,7 @@ function renderRail() {
   $('rail-go').hidden = !last;
   $('rail-go').textContent = nav.done ? 'Done' : nav.i + 1 < nav.phases.length ? 'Continue cycling ›' : 'Finish ›';
 }
-const railStep = d => { const k = nav.cardI + d; if (nav.done || k < 0 || k >= nav.cards.length) return; nav.cardI = k; renderRail(); };
+const railStep = d => { const k = nav.cardI + d; if (nav.done || k < 0 || k >= nav.cards.length) return; nav.cardI = k; renderRail(); saveNavState(true); };
 $('rail-prev').onclick = () => railStep(-1);
 $('rail-next').onclick = () => railStep(1);
 $('rail-go').onclick = () => { if (nav.done) endNav(); else nextPhase(); };
@@ -885,6 +933,7 @@ function setHeadingUp(on) {
   }
   if (nav.pos) followPos(nav.pos.lat, nav.pos.lon);
   toast(on ? 'The map now turns with your direction' : 'North is up');
+  saveNavState(true);
 }
 // keep you on screen: centred, or (turned map) low on the screen so you can see further ahead
 function followPos(lat, lon) {
@@ -902,7 +951,7 @@ window.addEventListener('resize', () => { if (nav.headingUp) layoutMap(true); })
 // ---- controls ----
 function endNav() {
   if (nav.headingUp) setHeadingUp(false);
-  nav.on = false; nav.prev = null; nav.arrived = false;
+  nav.on = false; clearNavSession(); nav.prev = null; nav.arrived = false;
   if (nav.watch != null && navigator.geolocation) navigator.geolocation.clearWatch(nav.watch);
   nav.watch = null; nav.pos = null;
   try { if (nav.wake) nav.wake.release(); } catch (e) {} nav.wake = null;
@@ -970,7 +1019,8 @@ $('fav-to').onclick = () => {
 };
 $('fav-edit').onclick = () => { favEdit = !favEdit; renderFavs(); };
 renderFavs();
-if (settings.gpsStart) useMyLocation();   // navigate from where you are by default
+if (hasNavSession()) resumeNav();              // a navigation was in progress when the app was closed
+else { clearNavSession(); if (settings.gpsStart) useMyLocation(); }   // (a stale or broken saved navigation is dropped) otherwise start from where you are
 
 // ================= feedback e-mail =================
 // assembled here (not written in the HTML) so it is not sitting in the page for address scrapers

@@ -73,4 +73,22 @@ assert.equal((gpx.match(/<trkseg>/g) || []).length, 2, "one segment per cycling 
 assert.ok(gpx.includes("<type>cycling</type>") && gpx.includes("2026-10-12T00:30:00Z"));
 // nothing recorded -> no file
 assert.equal(new Recorder().toFIT(), null);
+// ---- a ride in progress survives closing the app: snapshot -> JSON -> restore -> carry on ----
+{
+  const t = Date.UTC(2026, 9, 12, 1, 0, 0), live = new Recorder();
+  live.startLeg(t);
+  for (let i = 0; i <= 120; i++) live.addFix({ t: t + i * 1000, lat: 1.3 + i * 5e-5, lon: 103.8, acc: 5, alt: 10, speed: 5 });
+  const saved = JSON.parse(JSON.stringify(live.snapshot()));               // what goes into localStorage (leg still open)
+  const back = Recorder.restore(saved);                                      // the app is opened again 10 minutes later, 4 km away
+  assert.equal(back.open, false, "a restored ride has no open leg");
+  assert.ok(Math.abs(back.stats().distance - live.stats().distance) < 0.5, "same distance after restoring");
+  const t2 = t + 130 * 1000 + 10 * 60 * 1000;
+  back.startLeg(t2);
+  for (let i = 0; i <= 60; i++) back.addFix({ t: t2 + i * 1000, lat: 1.34 + i * 5e-5, lon: 103.84, acc: 5, alt: 10, speed: 5 });
+  back.endLeg(t2 + 61000);
+  const st2 = back.stats();
+  assert.equal(st2.legs, 2);
+  assert.ok(st2.distance > 900 && st2.distance < 1100, "just the two stretches, no 4 km jump across the time the app was closed: " + st2.distance);
+  assert.ok(st2.elapsed - st2.moving > 590, "the closed time counts as paused time");
+}
 console.log(`activity tests passed (${rec.length} records, ${fit.length} bytes)`);

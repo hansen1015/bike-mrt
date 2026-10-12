@@ -95,6 +95,10 @@ Tapping *Start navigation* walks through the plan leg by leg.
 - **The screen stays on** (Wake Lock) while navigating, where the browser supports it.
 - Everything runs on the phone, so navigation keeps working with a weak signal once the map has loaded (map tiles themselves need data).
 
+## Resuming a navigation
+
+A navigation is **kept when you close the app**. While you navigate, the plan, the step you are on (including which train card), whether you have arrived, and the GPS points recorded so far are saved on the device (the plan once, the small state and the track every few seconds and whenever the step changes or the page is hidden). When the app is opened again it goes straight back into the navigation, with the same screen and the recording intact; it is only forgotten when you press *End*, or *Done* on the arrival card (a navigation older than 12 hours is dropped). The time the app was closed shows up in the Strava file as paused time and starts a new lap, with no distance jump. Closed or backgrounded pages do not receive GPS positions from the browser, so keep the app open and the screen on while you ride (the app asks the phone to keep the screen awake).
+
 ## Strava file
 
 While you navigate, the phone's real GPS fixes of the **cycling legs** are recorded (one point a second, fixes worse than 50 m accuracy are skipped). Arriving at the destination does **not** stop the recording (and neither does arriving at a station: you press **Pause & MRT** when you go in): it carries on (so you can lock your bike, walk in, and so on) until you press **Stop & save**, and then the app downloads one file, `Bike-MRT_<date>_<time>.fit`:
