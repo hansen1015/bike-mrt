@@ -1,5 +1,5 @@
 // Keep BUILD in step with <meta name="build"> in index.html and VERSION in sw.js (tests/version.test.mjs checks it)
-const BUILD = 'v14';
+const BUILD = 'v15';
 import { Router } from './router.js';
 import { Planner } from './planner.js';
 import { railFare, sgClock, timeInfo, polyKm, FARE_TYPES } from './fares.js';
@@ -724,10 +724,10 @@ function onFix(pos) {
   updateBike();
   const end = ph.g.pts[ph.g.pts.length - 1];
   if (ph.g.total - nav.along < 25 || navDist(end, [lat, lon]) < 25) {
-    if (ph.toRide) { nextPhase(); return; }                 // at the station: on to the train steps
-    if (!nav.arrived) {                                     // at the destination: keep recording until you press Stop
+    if (!nav.arrived) {                                     // at the station or the destination: keep recording until you press the button
       nav.arrived = true; $('nav-arrived').classList.add('attn'); $('nav-off').hidden = true;
-      toast('You have arrived. Still recording: press Stop & save when you are done'); updateBike();
+      toast(ph.toRide ? 'You are at the station. Still recording: press Pause & MRT when you go in' : 'You have arrived. Still recording: press Stop & save when you are done');
+      updateBike();
     }
   }
   if (nav.follow) followPos(lat, lon);
@@ -736,8 +736,9 @@ function onFix(pos) {
 function updateBike() {
   const ph = nav.phases[nav.i]; if (!ph || ph.type !== 'bike') return;
   if (nav.arrived) {
-    $('nav-icon').textContent = '🏁'; $('nav-dist').textContent = 'Arrived'; $('nav-text').textContent = 'Still recording. Press Stop & save when you are done';
-    $('nav-remain').textContent = 'You have arrived'; $('nav-sub').textContent = 'Recording continues'; return;
+    $('nav-icon').textContent = ph.toRide ? '🚇' : '🏁'; $('nav-dist').textContent = 'Arrived';
+    $('nav-text').textContent = ph.toRide ? 'Still recording. Press Pause & MRT when you go in' : 'Still recording. Press Stop & save when you are done';
+    $('nav-remain').textContent = ph.toRide ? 'At the station' : 'You have arrived'; $('nav-sub').textContent = 'Recording continues'; return;
   }
   const g = ph.g, ni = nextInstruction(g, nav.along), d = Math.max(0, ni.along - nav.along);
   $('nav-icon').textContent = ICON[ni.type] || '↑';
@@ -762,7 +763,7 @@ function enterPhase(idx) {
     L.polyline(ph.leg.coords, { pane: 'nav', color: css('--bike'), weight: 8 }).addTo(navLayer);
     const end = ph.g.pts[ph.g.pts.length - 1];
     L.marker(end, { pane: 'nav', interactive: false, keyboard: false, icon: L.divIcon({ className: '', iconSize: [30, 30], iconAnchor: [4, 28], html: '<div class="flagwrap" style="font-size:28px;line-height:1">🏁</div>' }) }).addTo(navLayer);
-    $('nav-arrived').textContent = ph.toRide ? 'At the station ›' : 'Stop & save ■';
+    $('nav-arrived').textContent = ph.toRide ? 'Pause & MRT ⏸' : 'Stop & save ■';
     $('nav-icon').textContent = ICON.start; $('nav-dist').textContent = '-'; $('nav-text').textContent = nav.pos ? ph.g.ins[0].text : 'Waiting for GPS…';
     updateBike();
     if (nav.pos) map.setView([nav.pos.lat, nav.pos.lon], 17); else map.fitBounds(L.latLngBounds(ph.leg.coords), { paddingTopLeft: [20, 120], paddingBottomRight: [20, 100] });
