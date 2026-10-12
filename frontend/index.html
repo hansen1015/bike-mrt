@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <title>Bike-MRT</title>
-<meta name="build" content="v9">
+<meta name="build" content="v10">
 <script>
   // safety net: if something breaks (for example after an update left old and new files mixed), show a banner with a one-tap fix
   (function () {
@@ -140,8 +140,8 @@
   /* train steps: one card per step, arrows left and right */
   #rail { position:fixed; inset:0; z-index:2000; background:var(--bg); display:flex; flex-direction:column; padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom); }
   #rail-head { display:flex; justify-content:space-between; align-items:center; padding:12px 14px; font-weight:700; color:var(--mute); }
-  #rail-main { flex:1; min-height:0; display:flex; align-items:stretch; gap:6px; padding:0 8px; }
-  .rail-arrow { align-self:center; width:48px; height:92px; margin:0; padding:0; border-radius:14px; background:var(--card); color:var(--ink); border:1px solid var(--line); font-size:34px; flex:none; }
+  #rail-main { flex:1; min-height:0; display:flex; padding:0 12px; }
+  .rail-arrow { flex:1; height:64px; margin:0; padding:0; border-radius:16px; background:var(--card); color:var(--ink); border:1px solid var(--line); font-size:36px; line-height:1; }
   .rail-arrow:disabled { opacity:.25; }
   #rail-card { flex:1; min-width:0; overflow-y:auto; display:flex; flex-direction:column; touch-action:pan-y; }
   .rc { margin:auto 0; background:var(--card); border:1px solid var(--line); border-top:9px solid var(--lc, var(--accent)); border-radius:16px; padding:18px 18px 16px; text-align:left; box-shadow:var(--shadow); }
@@ -156,9 +156,12 @@
   .rc-stops li::before { content:""; position:absolute; left:-27px; top:12px; width:12px; height:12px; border-radius:50%; background:var(--card); border:3px solid var(--lc, var(--accent)); }
   .rc-stops li.mid::before { display:none; }
   .rc-stops summary { cursor:pointer; color:var(--mute); } .rc-stops ul { margin:6px 0 2px; padding-left:18px; font-size:15px; }
-  #rail-dots { display:flex; justify-content:center; gap:8px; padding:12px 0 4px; }
+  #rail-nav { display:flex; align-items:center; gap:12px; padding:6px 14px calc(14px + env(safe-area-inset-bottom)); }
+  #rail-dots { display:flex; justify-content:center; gap:8px; flex:none; min-width:60px; }
   #rail-dots i { width:9px; height:9px; border-radius:50%; background:var(--line); } #rail-dots i.on { background:var(--accent); transform:scale(1.35); }
-  #rail-go { margin:8px 14px 16px; padding:14px; font-size:17px; width:calc(100% - 28px); }
+  .rc-actions { margin-top:16px; display:flex; gap:8px; flex-wrap:wrap; }
+  .rc-actions button { margin:0; width:auto; padding:10px 14px; background:var(--bg); color:var(--ink); border:1px solid var(--line); font-size:14px; }
+  #rail-go { margin:10px 14px 0; padding:14px; font-size:17px; width:calc(100% - 28px); }
   #fatal { position:fixed; left:12px; right:12px; bottom:12px; z-index:4000; display:flex; gap:12px; align-items:center; justify-content:space-between; background:var(--card); color:var(--ink); border:1px solid var(--mrt); border-radius:12px; padding:10px 12px; box-shadow:var(--shadow); font-size:14px; }
   #fatal small { display:block; color:var(--mute); font-size:12px; }
   #fatal button { margin:0; width:auto; padding:8px 12px; flex:none; font-size:13px; }
@@ -268,13 +271,13 @@
   </div>
   <div id="rail" hidden>
     <div id="rail-head"><span id="rail-step">Step 1</span><button type="button" class="navbtn danger" id="rail-end">End</button></div>
-    <div id="rail-main">
+    <div id="rail-main"><div id="rail-card" aria-live="polite"></div></div>
+    <button type="button" id="rail-go">Continue cycling ›</button>
+    <div id="rail-nav">
       <button type="button" class="rail-arrow" id="rail-prev" aria-label="Previous step">‹</button>
-      <div id="rail-card" aria-live="polite"></div>
+      <div id="rail-dots"></div>
       <button type="button" class="rail-arrow" id="rail-next" aria-label="Next step">›</button>
     </div>
-    <div id="rail-dots"></div>
-    <button type="button" id="rail-go">Continue cycling ›</button>
   </div>
 </div>
 

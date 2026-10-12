@@ -1,8 +1,8 @@
 // Bike-MRT service worker: makes the app installable and lets it open without signal.
 // Bump VERSION whenever the files in data/ change so phones re-download them.
-const VERSION = 'v9';
+const VERSION = 'v10';
 const CACHE = 'bike-mrt-' + VERSION;
-const SHELL = ['./', 'index.html', 'manifest.webmanifest', 'js/app.js', 'js/router.js', 'js/planner.js', 'js/fares.js', 'js/search.js', 'js/nav.js', 'lib/leaflet.js', 'lib/leaflet.css',
+const SHELL = ['./', 'index.html', 'manifest.webmanifest', 'js/app.js', 'js/router.js', 'js/planner.js', 'js/fares.js', 'js/search.js', 'js/nav.js', 'js/activity.js', 'lib/leaflet.js', 'lib/leaflet.css',
   'icons/icon-192.png', 'icons/icon-512.png',
   'data/bg_nodes.bin.gz', 'data/bg_edges.bin.gz', 'data/bg_geom.bin.gz', 'data/bike_matrix.json',
   'data/sg_land.json', 'data/entrances.json', 'data/bg_names.bin.gz', 'data/bg_kinds.bin.gz', 'data/names.json', 'data/stations.json', 'data/mrt_edges.json', 'data/mrt_shapes.json'];

@@ -1,9 +1,10 @@
 // Keep BUILD in step with <meta name="build"> in index.html and VERSION in sw.js (tests/version.test.mjs checks it)
-const BUILD = 'v9';
+const BUILD = 'v10';
 import { Router } from './router.js';
 import { Planner } from './planner.js';
 import { railFare, sgClock, timeInfo, polyKm, FARE_TYPES } from './fares.js';
 import { searchPlaces } from './search.js';
+import { Recorder } from './activity.js';
 import { buildGuidance, locate, nextInstruction, railCards, fmtDist, spoken, dist as navDist, ICON } from './nav.js';
 
 const $ = id => document.getElementById(id);
@@ -221,8 +222,16 @@ function setPoint(key, lat, lon, pan) {
       else e.target.setLatLng(lastGood[key]); // dropped outside Singapore: snap back
     });
   } else markers[key].setLatLng([lat, lon]);
-  if (pan) map.panTo([lat, lon]);
+  if (pan) revealPoint(lat, lon);
   return true;
+}
+
+// Centre a place in the part of the map that is not under the bottom sheet (the sheet settles at half height after a search).
+function revealPoint(lat, lon, zoom = Math.max(map.getZoom(), 14)) {
+  const covered = mobileMQ.matches ? sheetPx('half') : 0, size = map.getSize();
+  const wanted = L.point(size.x / 2, (size.y - covered) / 2);   // where the place should appear on screen
+  const pt = map.project([lat, lon], zoom);
+  map.setView(map.unproject(pt.subtract(wanted).add(size.divideBy(2)), zoom), zoom, { animate: true });
 }
 
 let picking = null;
@@ -256,7 +265,7 @@ $('gps-from').onclick = () => {
     const { latitude: lat, longitude: lon, accuracy } = pos.coords;
     if (!setPoint('from', lat, lon, true)) { input.value = before; toast('You seem to be outside Singapore, so pick a start on the map instead'); return; }
     input.value = 'My location (±' + Math.round(accuracy) + ' m)';
-    map.setView([lat, lon], Math.max(map.getZoom(), 15));
+    revealPoint(lat, lon, Math.max(map.getZoom(), 15));
   }, err => {
     done(); input.value = before;
     toast(err.code === 1 ? 'Location permission denied: allow it in your browser settings' : 'Could not get your location, try again or pick on the map');
@@ -339,7 +348,7 @@ wireSearch('from'); wireSearch('to');
 // ================= planning =================
 let plans = [], activePlan = 0, replanTimer, routeBounds = null;
 // navigation state (declared here because the page layout code below reads it while loading)
-const nav = { on: false, plan: null, phases: [], i: 0, watch: null, along: 0, offCount: 0, follow: true, voice: false, wake: null, said: '', cards: [], cardI: 0, pos: null, done: false };
+const nav = { on: false, plan: null, phases: [], i: 0, watch: null, along: 0, offCount: 0, follow: true, voice: false, wake: null, said: '', cards: [], cardI: 0, pos: null, done: false, rec: new Recorder() };
 window.__bikeMrtNav = nav; // handy for debugging and tests
 
 // ---- departure time: "now" or a picked time, always read as Singapore time ----
@@ -621,6 +630,7 @@ function startNav(i, keepWatch = false) {
   if (!plans[i] || !railData) return;
   show(i);
   nav.on = true; nav.plan = plans[i]; nav.voice = settings.voice; nav.done = false;
+  if (!keepWatch) nav.rec = new Recorder();
   nav.phases = buildPhases(nav.plan);
   document.body.classList.add('navigating'); $('nav').hidden = false;
   document.documentElement.style.setProperty('--sheetH', '86px');
@@ -660,6 +670,7 @@ function onFix(pos) {
   drawPos();
   const ph = nav.phases[nav.i];
   if (!ph || ph.type !== 'bike') return;
+  nav.rec.addFix({ t: pos.timestamp, lat, lon, acc: accuracy, alt: pos.coords.altitude, speed: pos.coords.speed });
   const f = locate(ph.g, lat, lon, nav.along);
   if (f.cross <= Math.max(45, accuracy * 1.2)) { nav.offCount = 0; nav.along = Math.max(nav.along, f.along); $('nav-off').hidden = true; }
   else if (accuracy < 80 && ++nav.offCount >= 3) $('nav-off').hidden = false;
@@ -691,6 +702,7 @@ function enterPhase(idx) {
   if (!ph) { finishNav(); return; }
   if (ph.type === 'bike') {
     if (ph.g.pts.length < 2) { enterPhase(idx + 1); return; }
+    nav.rec.startLeg();            // timer runs while you cycle (a resume after the train ride)
     $('rail').hidden = true; $('nav-top').hidden = false; $('nav-bottom').hidden = false; $('nav-fabs').hidden = false;
     const casing = css('--casing');
     L.polyline(ph.leg.coords, { pane: 'nav', color: casing, weight: 13 }).addTo(navLayer);
@@ -702,6 +714,7 @@ function enterPhase(idx) {
     updateBike();
     if (nav.pos) map.setView([nav.pos.lat, nav.pos.lon], 17); else map.fitBounds(L.latLngBounds(ph.leg.coords), { paddingTopLeft: [20, 120], paddingBottomRight: [20, 100] });
   } else {
+    nav.rec.endLeg();              // timer paused during the train ride
     $('nav-top').hidden = true; $('nav-bottom').hidden = true; $('nav-fabs').hidden = true;
     nav.cards = ph.cards; nav.cardI = 0; nav.done = false;
     renderRail(); $('rail').hidden = false;
@@ -710,9 +723,36 @@ function enterPhase(idx) {
 
 const nextPhase = () => enterPhase(nav.i + 1);
 
+// ---- the ride as an activity file for Strava ----
+const sgStamp = ms => {
+  const p = Object.fromEntries(new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Singapore', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(new Date(ms)).map(x => [x.type, x.value]));
+  return `${p.year}-${p.month}-${p.day}_${p.hour}${p.minute}`;
+};
+function saveBlob(name, data, type) {
+  const url = URL.createObjectURL(new Blob([data], { type }));
+  const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+function downloadRide(kind) {
+  const st = nav.rec.stats(); if (!st.start) return false;
+  const base = `Bike-MRT_${sgStamp(st.start)}`;
+  if (kind === 'gpx') saveBlob(base + '.gpx', nav.rec.toGPX('Bike-MRT ride'), 'application/gpx+xml');
+  else saveBlob(base + '.fit', nav.rec.toFIT(), 'application/octet-stream');
+  return true;
+}
+const fmtHms = s => { s = Math.round(s); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60); return h ? `${h} h ${m} min` : `${m} min ${s % 60} s`; };
+
 function finishNav() {
   $('nav-top').hidden = true; $('nav-bottom').hidden = true; $('nav-fabs').hidden = true;
-  nav.done = true; nav.cards = [{ kind: 'done', line: '', title: 'You have arrived', lines: ['Safe riding!'], chips: [], stops: [] }]; nav.cardI = 0;
+  nav.rec.endLeg();
+  const st = nav.rec.stats(), ok = nav.rec.usable;
+  nav.done = true; nav.cardI = 0;
+  nav.cards = [{ kind: 'done', line: '', title: 'You have arrived', stops: [],
+    lines: ok ? [`Your ride was saved as a file for Strava: ${(st.distance / 1000).toFixed(1)} km of cycling in ${fmtHms(st.moving)}. The train rides are paused time.`, 'Upload it at strava.com/upload, or share the file to the Strava app.']
+              : ['Safe riding!', 'No GPS track was recorded (GPS was off or had no signal), so there is no file to save.'],
+    chips: ok ? [`${(st.distance / 1000).toFixed(1)} km`, `${fmtHms(st.moving)} moving`, `${st.legs} cycling ${st.legs === 1 ? 'leg' : 'legs'}`] : [],
+    actions: ok ? [{ label: 'Save .fit again', run: () => downloadRide('fit') }, { label: 'GPX version', run: () => downloadRide('gpx') }] : [] }];
+  if (ok) { try { downloadRide('fit'); } catch (e) { toast('Could not save the ride file'); } }  // downloads by itself when you arrive
   renderRail(); $('rail').hidden = false;
 }
 
@@ -727,7 +767,8 @@ function renderRail() {
     const mid = c.stops.slice(1, -1);
     stops = `<ol class="rc-stops"><li class="end">${esc(c.stops[0])}<small>get on here</small></li>${mid.length ? `<li class="mid"><details><summary>${mid.length} ${mid.length === 1 ? 'stop' : 'stops'} in between</summary><ul>${mid.map(s => `<li>${esc(s)}</li>`).join('')}</ul></details></li>` : ''}<li class="end">${esc(c.stops[c.stops.length - 1])}<small>get off here</small></li></ol>`;
   }
-  $('rail-card').innerHTML = `<div class="rc" style="--lc:${col}"><div class="rc-icon">${icon}</div><h2>${esc(c.title)}</h2>${c.lines.map(t => `<p>${esc(t)}</p>`).join('')}<div class="rc-chips">${c.chips.map(t => `<span>${esc(t)}</span>`).join('')}</div>${stops}</div>`;
+  $('rail-card').innerHTML = `<div class="rc" style="--lc:${col}"><div class="rc-icon">${icon}</div><h2>${esc(c.title)}</h2>${c.lines.map(t => `<p>${esc(t)}</p>`).join('')}<div class="rc-chips">${c.chips.map(t => `<span>${esc(t)}</span>`).join('')}</div>${stops}${c.actions && c.actions.length ? '<div class="rc-actions"></div>' : ''}</div>`;
+  (c.actions || []).forEach(a => { const b = document.createElement('button'); b.type = 'button'; b.textContent = a.label; b.onclick = a.run; $('rail-card').querySelector('.rc-actions').appendChild(b); });
   $('rail-dots').innerHTML = nav.done ? '' : nav.cards.map((_, k) => `<i class="${k === nav.cardI ? 'on' : ''}"></i>`).join('');
   $('rail-prev').disabled = nav.done || nav.cardI === 0; $('rail-next').disabled = nav.done || nav.cardI === n - 1;
   $('rail-prev').hidden = $('rail-next').hidden = nav.done;
@@ -759,7 +800,13 @@ function endNav() {
   applySheetMode(); setSheet('half');
   if (plans.length) show(activePlan);
 }
-const confirmEnd = () => { if (confirm('End navigation?')) endNav(); };
+const confirmEnd = () => {
+  if (!confirm('End navigation?')) return;
+  nav.rec.endLeg();
+  const st = nav.rec.stats();
+  if (nav.rec.usable && st.moving >= 30 && confirm(`Save the ride so far (${(st.distance / 1000).toFixed(1)} km) as a file for Strava?`)) downloadRide('fit');
+  endNav();
+};
 $('nav-end').onclick = confirmEnd;
 $('rail-end').onclick = confirmEnd;
 $('nav-arrived').onclick = nextPhase;

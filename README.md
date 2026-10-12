@@ -5,7 +5,7 @@ Fastest door-to-door commute planner for a **trifold bicycle + MRT/LRT** in Sing
 - total time, cycling km/minutes and rail minutes,
 - every leg on a map (cycle routes along real roads and park connectors, rail along the real track),
 - the MRT/LRT lines, stations and transfers,
-- **turn-by-turn navigation** ("Start navigation"): on the cycling legs the map follows your GPS position with the next turn, the street name and the distance (optional voice), and warns you when you are off the route, with a re-route button; at the station it switches to **step cards for the train ride** that you page through with the left and right arrows (enter at this exit, take this line towards X, change here, get off and leave by that exit), and then carries on cycling,
+- **turn-by-turn navigation** ("Start navigation"): on the cycling legs the map follows your GPS position with the next turn, the street name and the distance (optional voice), and warns you when you are off the route, with a re-route button; at the station it switches to **step cards for the train ride** that you page through with the left and right arrows (enter at this exit, take this line towards X, change here, get off and leave by that exit), and then carries on cycling; when you arrive it downloads **one activity file for Strava** with your real GPS track of the cycling parts (the train rides are paused time),
 - an **intro screen** explaining how to use the app, with an "add to home screen" prompt where the browser supports it,
 - **search by building, business or station name** (merges MRT/LRT stations, [OneMap](https://www.onemap.gov.sg/) for buildings, landmarks and postal codes, and [Photon](https://photon.komoot.io/) for OpenStreetMap shops, cafes, clinics and other businesses), with a clear button and keyboard support,
 - **which station exit to use** for every train ride ("Enter at Exit A · Leave at Exit 4"), drawn on the map, with the cycling routed to and from that exact exit,
@@ -57,6 +57,7 @@ Bump `VERSION` in `frontend/sw.js` after changing data so installed apps refresh
 ```
 node tests/fares.test.mjs     # fare bands, early-bird discount, 2026 fare review, peak detection
 node tests/routing.test.mjs   # places that must be routable (airport, checkpoints...), random trips
+node tests/activity.test.mjs   # the Strava file: FIT structure, pauses, distance, GPX
 node tests/nav.test.mjs        # turn instructions, following a GPS position, train step cards
 node tests/entrances.test.mjs  # exit data sanity and the exit choice
 node tests/version.test.mjs   # page, script and service worker carry the same build id
@@ -87,6 +88,18 @@ Tapping *Start navigation* walks through the plan leg by leg.
 - **Train rides:** GPS rarely works underground, so the train part is a set of cards you move through yourself with the arrows (or by swiping, or the keyboard arrows). The direction on each line ("towards Pasir Ris") comes from the station numbers along the ride.
 - **The screen stays on** (Wake Lock) while navigating, where the browser supports it. Voice guidance uses the browser's speech synthesis and can be switched on with the speaker button.
 - Everything runs on the phone, so navigation keeps working with a weak signal once the map has loaded (map tiles themselves need data).
+
+## Strava file
+
+While you navigate, the phone's real GPS fixes of the **cycling legs** are recorded (one point a second, fixes worse than 50 m accuracy are skipped). When you press *Arrived* (or arrive automatically) the app downloads one file, `Bike-MRT_<date>_<time>.fit`:
+
+- **FIT** is the format Garmin and Wahoo devices write, so it can say "paused": the timer stops when you reach the station and starts again when you continue cycling, the distance counter does not move during the train ride (no giant jump from station to station), each cycling leg is a lap, and the sport is cycling. Strava therefore shows your moving time without the MRT ride.
+- The positions are the actual GPS track, not the planned route.
+- A **GPX** version (one track segment per cycling leg) is available on the arrival card as a fallback; GPX has no pause concept.
+- Upload at strava.com/upload, or share the file to the Strava app. Strava replaces the elevation with its own data.
+- If you press *End* early, the app asks whether to save the ride so far.
+
+The FIT writer is a small dependency-free encoder (`frontend/js/activity.js`). Its output is checked with an independent parser in `tests/activity.test.mjs`, and was also decoded with the Python `fitdecode` and `fitparse` libraries (CRC verified). It has not been uploaded to Strava from this repository's tests, so tell me if Strava rejects a file.
 
 ## Station exits
 
