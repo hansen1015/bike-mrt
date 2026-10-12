@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <title>Bike-MRT</title>
-<meta name="build" content="v17">
+<meta name="build" content="v18">
 <script>
   // safety net: if something breaks (for example after an update left old and new files mixed), show a banner with a one-tap fix
   (function () {
@@ -40,14 +40,14 @@
     document.documentElement.dataset.theme = dark ? 'dark' : 'light';
   } catch (e) { document.documentElement.dataset.theme = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'; }
 </script>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230b6e4f'/%3E%3Ccircle cx='32' cy='32' r='21' fill='none' stroke='white' stroke-width='4'/%3E%3Ccircle cx='32' cy='32' r='3.5' fill='white'/%3E%3Cpath d='M32 11v42M11 32h42M17 17l30 30M47 17L17 47' stroke='white' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23d92d20'/%3E%3Ccircle cx='32' cy='32' r='21' fill='none' stroke='white' stroke-width='4'/%3E%3Ccircle cx='32' cy='32' r='3.5' fill='white'/%3E%3Cpath d='M32 11v42M11 32h42M17 17l30 30M47 17L17 47' stroke='white' stroke-width='1.2'/%3E%3C/svg%3E">
 <link rel="manifest" href="manifest.webmanifest">
-<meta name="theme-color" content="#0b6e4f">
+<meta name="theme-color" content="#d92d20">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <link rel="stylesheet" href="lib/leaflet.css">
 <style>
-  :root { color-scheme:light; --bg:#f6f7f9; --card:#fff; --ink:#1b1f24; --mute:#667085; --line:#e4e7ec; --accent:#0b6e4f; --bike:#0b6e4f; --mrt:#d92d20; --casing:#fff; --on-accent:#fff; --shadow:0 8px 30px rgba(0,0,0,.18); }
-  :root[data-theme="dark"] { color-scheme:dark; --bg:#14171a; --card:#1d2125; --ink:#eceff3; --mute:#98a2b3; --line:#2c3238; --accent:#3ccf91; --bike:#2fb87f; --mrt:#ff6b5e; --casing:#0d1114; --on-accent:#06251a; --shadow:0 8px 30px rgba(0,0,0,.6); }
+  :root { color-scheme:light; --bg:#f6f7f9; --card:#fff; --ink:#1b1f24; --mute:#667085; --line:#e4e7ec; --accent:#d92d20; --bike:#d92d20; --mrt:#4f46e5; --casing:#fff; --on-accent:#fff; --shadow:0 8px 30px rgba(0,0,0,.18); }
+  :root[data-theme="dark"] { color-scheme:dark; --bg:#14171a; --card:#1d2125; --ink:#eceff3; --mute:#98a2b3; --line:#2c3238; --accent:#ff6b5e; --bike:#ff6b5e; --mrt:#8b93ff; --casing:#0d1114; --on-accent:#2a0805; --shadow:0 8px 30px rgba(0,0,0,.6); }
   * { box-sizing:border-box; }
   body { margin:0; font:15px/1.45 system-ui,sans-serif; background:var(--bg); color:var(--ink); height:100vh; display:grid; grid-template-columns:400px 1fr; }
   #side { display:flex; flex-direction:column; min-height:0; overflow:hidden; border-right:1px solid var(--line); background:var(--bg); }
@@ -102,14 +102,14 @@
   .linkbtn { margin:0; width:auto; padding:0; background:none; color:var(--accent); font-size:13px; font-weight:700; }
   #favlist { display:flex; flex-wrap:wrap; gap:8px; margin-top:7px; }
   .favchip { margin:0; width:auto; padding:8px 13px; border-radius:18px; background:var(--card); color:var(--ink); border:1px solid var(--line); font-size:14px; font-weight:600; display:inline-flex; gap:8px; align-items:center; }
-  .favchip.edit { border-color:var(--mrt); } .favchip i { font-style:normal; color:var(--mrt); }
+  .favchip.edit { border-color:var(--accent); } .favchip i { font-style:normal; color:var(--accent); }
   .startbtn { margin-top:12px; padding:12px; font-size:16px; }
   @keyframes spin { to { transform:rotate(360deg); } }
   .pinbtn.loading { position:relative; color:transparent; pointer-events:none; }
   .pinbtn.loading::after { content:""; position:absolute; inset:0; margin:auto; width:18px; height:18px; border:3px solid var(--line); border-top-color:var(--accent); border-radius:50%; animation:spin .8s linear infinite; }
   @media (prefers-reduced-motion: reduce) { .pinbtn.loading::after { animation-duration:2.4s; } }
   #from.locating { color:var(--mute); font-style:italic; }
-  .err { color:var(--mrt); margin-top:10px; }
+  .err { color:var(--accent); margin-top:10px; }
   .hint { font-size:12px; color:var(--mute); margin-top:10px; }
 
   /* map furniture follows the theme */
@@ -137,8 +137,8 @@
   #attr-static { display:none; position:fixed; left:8px; bottom:calc(92px + env(safe-area-inset-bottom)); z-index:1400; font-size:11px; background:color-mix(in srgb, var(--card) 80%, transparent); color:var(--mute); padding:1px 6px; border-radius:6px; }
   body.headingup #attr-static { display:block; }
   .fab.on { background:var(--accent); color:var(--on-accent); }
-  @keyframes pulse { 50% { box-shadow:0 0 0 7px rgba(60,207,145,.35); } }
-  .navbtn.rec { background:#d92d20; color:#fff; }
+  @keyframes pulse { 50% { box-shadow:0 0 0 7px rgba(217,45,32,.35); } }
+  .navbtn.rec { background:var(--accent); color:var(--on-accent); }
   .recdot { color:#e5342d; animation:blink 1.2s infinite; } @keyframes blink { 50% { opacity:.25; } }
   .navbtn.attn { animation:pulse 1.4s infinite; }
   body.navigating #toast { top:118px; transform:translate(-50%,-220px); }
@@ -154,7 +154,7 @@
   .fab { margin:0; width:50px; height:50px; padding:0; border-radius:50%; background:var(--card); color:var(--ink); border:1px solid var(--line); font-size:21px; box-shadow:0 3px 12px rgba(0,0,0,.35); }
   #nav-stats b { white-space:nowrap; }
   .navbtn.wide { font-size:14px; font-weight:700; background:var(--accent); color:var(--on-accent); border-color:transparent; }
-  .navbtn.danger { color:var(--mrt); font-size:14px; font-weight:700; }
+  .navbtn.danger { color:var(--accent); font-size:14px; font-weight:700; }
   #nav-off { position:fixed; top:calc(96px + env(safe-area-inset-top)); left:12px; right:12px; z-index:1450; display:flex; align-items:center; justify-content:space-between; gap:10px; background:#b42318; color:#fff; border-radius:12px; padding:9px 12px; font-weight:600; box-shadow:0 4px 14px rgba(0,0,0,.35); }
   #nav-off button { margin:0; width:auto; padding:7px 12px; background:#fff; color:#b42318; font-size:14px; flex:none; }
   .me { position:relative; width:22px; height:22px; border-radius:50%; background:#2f7cf6; border:3px solid #fff; box-shadow:0 0 0 2px rgba(47,124,246,.4), 0 1px 6px rgba(0,0,0,.45); }
@@ -185,10 +185,17 @@
   .rc-actions a { margin:0; padding:10px 14px; border-radius:8px; background:var(--accent); color:var(--on-accent); font:600 14px system-ui; text-decoration:none; display:inline-block; }
   .rc-actions button { margin:0; width:auto; padding:10px 14px; background:var(--bg); color:var(--ink); border:1px solid var(--line); font-size:14px; }
   #rail-go { margin:10px 14px 0; padding:14px; font-size:17px; width:calc(100% - 28px); }
-  #fatal { position:fixed; left:12px; right:12px; bottom:12px; z-index:4000; display:flex; gap:12px; align-items:center; justify-content:space-between; background:var(--card); color:var(--ink); border:1px solid var(--mrt); border-radius:12px; padding:10px 12px; box-shadow:var(--shadow); font-size:14px; }
+  #fatal { position:fixed; left:12px; right:12px; bottom:12px; z-index:4000; display:flex; gap:12px; align-items:center; justify-content:space-between; background:var(--card); color:var(--ink); border:1px solid var(--accent); border-radius:12px; padding:10px 12px; box-shadow:var(--shadow); font-size:14px; }
   #fatal small { display:block; color:var(--mute); font-size:12px; }
   #fatal button { margin:0; width:auto; padding:8px 12px; flex:none; font-size:13px; }
-  #toast { position:fixed; left:50%; top:16px; transform:translate(-50%,-80px); background:var(--card); color:var(--ink); border:1px solid var(--mrt); border-radius:10px; padding:10px 14px; box-shadow:var(--shadow); z-index:3000; transition:transform .25s; max-width:90vw; font-size:14px; pointer-events:none; }
+  #toast { position:fixed; left:50%; top:16px; transform:translate(-50%,-80px); background:var(--card); color:var(--ink); border:1px solid var(--accent); border-radius:10px; padding:10px 14px; box-shadow:var(--shadow); z-index:3000; transition:transform .25s; max-width:90vw; font-size:14px; pointer-events:none; }
+  #dlg { position:fixed; inset:0; z-index:3500; background:rgba(0,0,0,.5); display:none; align-items:center; justify-content:center; padding:20px; }
+  #dlg.show { display:flex; }
+  #dlg .box { background:var(--card); color:var(--ink); border:1px solid var(--line); border-radius:16px; padding:20px 18px 16px; width:100%; max-width:340px; box-shadow:var(--shadow); text-align:left; }
+  #dlg h3 { margin:0 0 6px; font-size:17px; } #dlg p { margin:0 0 4px; color:var(--mute); font-size:14px; line-height:1.4; }
+  #dlg input { width:100%; box-sizing:border-box; margin-top:10px; padding:10px; border:1px solid var(--line); border-radius:8px; background:var(--bg); color:var(--ink); font:16px system-ui; }
+  #dlg .acts { display:flex; gap:10px; margin-top:16px; } #dlg .acts button { margin:0; flex:1; }
+  #dlg .acts button.ghost { background:var(--bg); color:var(--ink); border:1px solid var(--line); }
   #toast.show { transform:translate(-50%,0); }
 
   /* intro screen */
@@ -277,6 +284,7 @@
 </div>
 <div id="map"></div>
 <div id="toast" role="status"></div>
+<div id="dlg" role="dialog" aria-modal="true" aria-labelledby="dlg-title"><div class="box"><h3 id="dlg-title"></h3><p id="dlg-text"></p><input id="dlg-input" maxlength="30" autocomplete="off"><div class="acts"><button type="button" class="ghost" id="dlg-no"></button><button type="button" id="dlg-yes"></button></div></div></div>
 <div id="attr-static">© OpenStreetMap contributors</div>
 
 <div id="nav" hidden>
@@ -317,7 +325,7 @@
     <ol class="steps">
       <li><span><b>Choose where from and to.</b> The start is <b>your location</b> by default (the app asks for it when it opens). Type an address, business or station for the destination, tap 📍 and then the map, or pick a <b>favourite</b>: tap ☆ next to the destination to save it, and it shows on the home page. Pins can be dragged.</span></li>
       <li><span><b>Tap “Find fastest route”.</b> The app compares cycling the whole way, taking trains, and mixes of both, even cycle → train → cycle → train → cycle.</span></li>
-      <li><span><b>Read the plan.</b> Green <b>BIKE</b> legs are cycling, coloured <b>MRT</b> / <b>LRT</b> legs are trains, with an estimated fare and the station exits to enter and leave by. Tap a plan to see it on the map.</span></li>
+      <li><span><b>Read the plan.</b> Red <b>BIKE</b> legs are cycling, coloured <b>MRT</b> / <b>LRT</b> legs are trains, with an estimated fare and the station exits to enter and leave by. Tap a plan to see it on the map.</span></li>
       <li><span><b>Navigate each ride.</b> Tap <b>Start navigation</b>: follow the map and the turn-by-turn directions while you cycle, then step through the MRT directions with the arrows and carry on cycling.</span></li>
       <li><span><b>Make it yours in ⚙️ Settings.</b> Dark mode, which lines to use, riding speed, longest ride, waiting and transfer times.</span></li>
     </ol>

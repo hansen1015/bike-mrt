@@ -1,5 +1,5 @@
 // Keep BUILD in step with <meta name="build"> in index.html and VERSION in sw.js (tests/version.test.mjs checks it)
-const BUILD = 'v17';
+const BUILD = 'v18';
 import { Router } from './router.js';
 import { Planner } from './planner.js';
 import { railFare, sgClock, timeInfo, polyKm, FARE_TYPES } from './fares.js';
@@ -112,7 +112,7 @@ function applyTiles() {
 
 function applyTheme() {
   document.documentElement.dataset.theme = effectiveTheme();
-  document.querySelector('meta[name="theme-color"]').content = isDark() ? '#14171a' : '#0b6e4f';
+  document.querySelector('meta[name="theme-color"]').content = isDark() ? '#14171a' : '#d92d20';
   applyTiles();
   drawNetwork();
   if (plans.length) show(activePlan);
@@ -155,6 +155,23 @@ landReady.then(rings => {
 });
 
 let toastTimer;
+// our own dialog (same look as the app) instead of the browser's confirm / prompt
+function ask({ title, text = '', ok = 'OK', cancel = 'Cancel', input = null }) {
+  return new Promise(resolve => {
+    const d = $('dlg'), inp = $('dlg-input'), yes = $('dlg-yes'), no = $('dlg-no');
+    $('dlg-title').textContent = title; $('dlg-text').textContent = text; $('dlg-text').hidden = !text;
+    yes.textContent = ok; no.textContent = cancel;
+    inp.hidden = input === null; inp.value = input || '';
+    const done = v => { d.classList.remove('show'); yes.onclick = no.onclick = d.onclick = inp.onkeydown = null; resolve(v); };
+    yes.onclick = () => done(input === null ? true : inp.value);
+    no.onclick = () => done(input === null ? false : null);
+    d.onclick = e => { if (e.target === d) no.onclick(); };
+    inp.onkeydown = e => { if (e.key === 'Enter') yes.onclick(); else if (e.key === 'Escape') no.onclick(); };
+    d.classList.add('show');
+    setTimeout(() => (input === null ? yes : inp).focus(), 30);
+  });
+}
+
 function toast(msg) {
   const t = $('toast'); t.textContent = msg; t.classList.add('show');
   clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 2800);
@@ -219,7 +236,7 @@ function setPoint(key, lat, lon, pan) {
   if (!markers[key]) {
     markers[key] = L.marker([lat, lon], { draggable: true, title: key === 'from' ? 'Start' : 'Destination',
       icon: L.divIcon({ className: '', iconSize: [30, 30], iconAnchor: [15, 28],
-        html: `<div class="pinwrap"><div style="background:${key === 'from' ? '#0b6e4f' : '#d92d20'};color:#fff;width:30px;height:30px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);display:grid;place-items:center"><b style="transform:rotate(45deg)">${key === 'from' ? 'A' : 'B'}</b></div></div>` }) }).addTo(map);
+        html: `<div class="pinwrap"><div style="background:${key === 'from' ? '#1b1f24' : '#d92d20'};color:#fff;width:30px;height:30px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);display:grid;place-items:center"><b style="transform:rotate(45deg)">${key === 'from' ? 'A' : 'B'}</b></div></div>` }) }).addTo(map);
     markers[key].on('dragend', e => {
       const p = e.target.getLatLng();
       if (setPoint(key, p.lat, p.lng)) $(key).value = 'Pin (' + p.lat.toFixed(5) + ', ' + p.lng.toFixed(5) + ')';
@@ -813,9 +830,9 @@ function refreshMainButton() {
   b.classList.toggle('rec', !nav.recording && !nav.arrived);
   b.textContent = !nav.recording ? (nav.arrived ? (ph.toRide ? 'To the MRT ›' : 'Finish ›') : '● Start recording') : ph.toRide ? 'Pause & MRT ⏸' : 'Stop & save ■';
 }
-function startRecording() {
+async function startRecording() {
   const p = nav.pos;
-  if ((!p || p.accuracy > 50) && !confirm('The GPS is not locked yet, so the start of the track may be inaccurate. Start recording anyway?')) return;
+  if ((!p || p.accuracy > 50) && !await ask({ title: 'GPS not locked yet', text: 'The start of the track may be inaccurate. Start recording anyway?', ok: 'Start recording', cancel: 'Wait' })) return;
   nav.recording = true; nav.rec.startLeg();
   refreshMainButton(); updateBike(); saveNavState(true); toast('Recording started');
 }
@@ -987,11 +1004,11 @@ function endNav() {
   applySheetMode(); setSheet('half');
   if (plans.length) show(activePlan);
 }
-const confirmEnd = () => {
-  if (!confirm('End navigation?')) return;
+const confirmEnd = async () => {
+  if (!await ask({ title: 'End navigation?', ok: 'End', cancel: 'Keep going' })) return;
   nav.rec.endLeg();
   const st = nav.rec.stats();
-  if (nav.rec.usable && st.moving >= 30 && confirm(`Save the ride so far (${(st.distance / 1000).toFixed(1)} km) as a file for Strava?`)) downloadRide('fit');
+  if (nav.rec.usable && st.moving >= 30 && await ask({ title: 'Save the ride?', text: `Save the ride so far (${(st.distance / 1000).toFixed(1)} km) as a file for Strava?`, ok: 'Save', cancel: 'No thanks' })) downloadRide('fit');
   endNav();
 };
 $('nav-end').onclick = confirmEnd;
@@ -1035,13 +1052,13 @@ function useFav(f) { // one tap: the destination is set and the routes appear
   $('to').value = f.name;
   if (setPoint('to', f.lat, f.lon, true)) { setSheet('half'); runPlan(); }
 }
-$('fav-to').onclick = () => {
+$('fav-to').onclick = async () => {
   if (!picked.to) { toast('Choose a destination first, then tap ☆ to save it'); return; }
   const have = favNear(picked.to);
-  if (have) { if (confirm(`Remove "${have.name}" from your favourites?`)) { favs = favs.filter(x => x !== have); saveFavs(); renderFavs(); } return; }
+  if (have) { if (await ask({ title: 'Remove favourite?', text: `Remove "${have.name}" from your favourites?`, ok: 'Remove', cancel: 'Keep' })) { favs = favs.filter(x => x !== have); saveFavs(); renderFavs(); } return; }
   if (favs.length >= 20) { toast('You can keep up to 20 favourites'); return; }
   const raw = $('to').value.trim();
-  const name = (prompt('Name this favourite (for example Home or Work)', /^Pin \(/.test(raw) ? '' : raw.slice(0, 30)) || '').trim().slice(0, 30);
+  const name = (await ask({ title: 'Name this favourite', text: 'For example Home or Work', ok: 'Save', input: /^Pin \(/.test(raw) ? '' : raw.slice(0, 30) }) || '').trim().slice(0, 30);
   if (!name) return;
   favs.push({ name, lat: picked.to.lat, lon: picked.to.lon }); saveFavs(); renderFavs(); toast('Saved to favourites');
 };
