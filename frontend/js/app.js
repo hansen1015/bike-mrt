@@ -1,5 +1,5 @@
 // Keep BUILD in step with <meta name="build"> in index.html and VERSION in sw.js (tests/version.test.mjs checks it)
-const BUILD = 'v18';
+const BUILD = 'v19';
 import { Router } from './router.js';
 import { Planner } from './planner.js';
 import { railFare, sgClock, timeInfo, polyKm, FARE_TYPES } from './fares.js';
@@ -25,7 +25,7 @@ const DEFAULT_SETTINGS = {
   theme: 'auto', showNet: true, showLabels: true,
   speed: 16, maxRide: 15, allowMid: true, bikePen: 1,
   lines: ['NS', 'EW', 'NE', 'CC', 'DT', 'TE', 'BP', 'SK', 'PG'],
-  fold: 2.5, alight: 2, transferAdj: 0, transferPen: 0, depart: 'now', showFares: true, fareType: 'adult', alts: 3, gpsStart: true,
+  fold: 2.5, alight: 2, transferAdj: 0, transferPen: 0, depart: 'now', showFares: true, fareType: 'adult', alts: 3, gpsStart: true, headingUp: false,
 };
 // chip key -> actual line codes in the data (the airport branch rides with East-West, each LRT system has two loops)
 const LINE_GROUPS = { NS: ['NS'], EW: ['EW', 'CG'], NE: ['NE'], CC: ['CC'], DT: ['DT'], TE: ['TE'], BP: ['BP'], SK: ['SE', 'SW'], PG: ['PE', 'PW'] };
@@ -651,6 +651,7 @@ applySheetMode();
 // Phases follow the plan: a cycling leg (map + turn-by-turn, following your GPS position), then a train ride (step cards you page
 // through with the arrows), then cycling again, until you arrive.
 map.createPane('nav'); map.getPane('nav').style.zIndex = 470;
+map.createPane('me'); map.getPane('me').style.zIndex = 480;   // your position sits above the route line
 const navLayer = L.layerGroup().addTo(map);
 let posMarker = null, accCircle = null;
 const LINE_FULL = { NS: 'North-South Line', EW: 'East-West Line', CG: 'East-West Line (Changi Airport branch)', NE: 'North East Line', CC: 'Circle Line', DT: 'Downtown Line', TE: 'Thomson-East Coast Line' };
@@ -697,6 +698,7 @@ async function startNav(i, keepWatch = false, resume = null) {
   savePlan();
   if (resume && resume.done) finishNav({ download: false }); else enterPhase(resume ? resume.i : 0);
   if (resume) applyResume(resume);
+  if (settings.headingUp && !nav.headingUp) setHeadingUp(true, false);
   saveNavState(true);
 }
 
@@ -729,7 +731,7 @@ function applyResume(r) {
     refreshMainButton();
     updateBike();
   } else if (ph && ph.type === 'rail') { nav.cardI = Math.max(0, Math.min(r.cardI || 0, nav.cards.length - 1)); renderRail(); }
-  if (r.headingUp) setHeadingUp(true);
+  if (r.headingUp) setHeadingUp(true, false);
   toast('Navigation resumed');
 }
 async function resumeNav() {
@@ -754,7 +756,7 @@ function drawPos() {
   const p = nav.pos; if (!p) return;
   const at = [p.lat, p.lon];
   if (!posMarker) {
-    posMarker = L.marker(at, { pane: 'nav', interactive: false, keyboard: false, icon: L.divIcon({ className: '', iconSize: [28, 28], iconAnchor: [14, 14], html: '<div class="me"><div class="me-arrow"></div></div>' }) }).addTo(map);
+    posMarker = L.marker(at, { pane: 'me', interactive: false, keyboard: false, icon: L.divIcon({ className: '', iconSize: [28, 28], iconAnchor: [14, 14], html: '<div class="me"><div class="me-arrow"></div></div>' }) }).addTo(map);
     accCircle = L.circle(at, { pane: 'nav', radius: p.accuracy, weight: 1, color: '#2f7cf6', fillOpacity: 0.1, interactive: false }).addTo(map);
   } else { posMarker.setLatLng(at); accCircle.setLatLng(at).setRadius(p.accuracy); }
   const me = posMarker.getElement() && posMarker.getElement().querySelector('.me');
@@ -959,8 +961,9 @@ function turnMap(heading) {                                           // ease to
   if (Math.abs(d) < 4) return;
   setBearing(nav.bearing + d * 0.6);
 }
-function setHeadingUp(on) {
+function setHeadingUp(on, remember = true) {
   nav.headingUp = on;
+  if (remember) { settings.headingUp = on; saveSettings(); }   // the choice is kept for the next navigation
   document.body.classList.toggle('headingup', on);
   $('nav-rotate').classList.toggle('on', on); $('nav-rotate').setAttribute('aria-pressed', on);
   if (on) {
@@ -973,7 +976,7 @@ function setHeadingUp(on) {
     map.dragging.enable(); map.touchZoom.disable(); map.options.touchZoom = true; map.touchZoom.enable(); map.doubleClickZoom.enable();
   }
   if (nav.pos) followPos(nav.pos.lat, nav.pos.lon);
-  toast(on ? 'The map now turns with your direction' : 'North is up');
+  if (remember) toast(on ? 'The map now turns with your direction' : 'North is up');
   saveNavState(true);
 }
 // keep you on screen: centred, or (turned map) low on the screen so you can see further ahead
@@ -991,7 +994,7 @@ window.addEventListener('resize', () => { if (nav.headingUp) layoutMap(true); })
 
 // ---- controls ----
 function endNav() {
-  if (nav.headingUp) setHeadingUp(false);
+  if (nav.headingUp) setHeadingUp(false, false);
   nav.on = false; clearNavSession(); nav.prev = null; nav.arrived = false;
   if (nav.watch != null && navigator.geolocation) navigator.geolocation.clearWatch(nav.watch);
   nav.watch = null; nav.pos = null;
