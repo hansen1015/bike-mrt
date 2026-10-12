@@ -5,7 +5,7 @@ Fastest door-to-door commute planner for a **trifold bicycle + MRT/LRT** in Sing
 - total time, cycling km/minutes and rail minutes,
 - every leg on a map (cycle routes along real roads and park connectors, rail along the real track),
 - the MRT/LRT lines, stations and transfers,
-- an *Open in Google Maps* button for each cycling leg (start to end, Google picks its own cycling route),
+- **turn-by-turn navigation** ("Start navigation"): on the cycling legs the map follows your GPS position with the next turn, the street name and the distance (optional voice), and warns you when you are off the route, with a re-route button; at the station it switches to **step cards for the train ride** that you page through with the left and right arrows (enter at this exit, take this line towards X, change here, get off and leave by that exit), and then carries on cycling,
 - an **intro screen** explaining how to use the app, with an "add to home screen" prompt where the browser supports it,
 - **search by building, business or station name** (merges MRT/LRT stations, [OneMap](https://www.onemap.gov.sg/) for buildings, landmarks and postal codes, and [Photon](https://photon.komoot.io/) for OpenStreetMap shops, cafes, clinics and other businesses), with a clear button and keyboard support,
 - **which station exit to use** for every train ride ("Enter at Exit A · Leave at Exit 4"), drawn on the map, with the cycling routed to and from that exact exit,
@@ -44,7 +44,7 @@ python build_mrt.py            # stations + links + travel times -> data/station
 python build_shapes.py         # snap links onto real track       -> data/mrt_shapes.json
 python build_entrances.py      # station exits (Exit A, B, C...)  -> frontend/data/entrances.json
 python build_land.py           # Singapore land outline (map limits, pin checks) -> frontend/data/sg_land.json
-python export_bikegraph.py     # compact bike graph (keeps the strongly connected core, so every pin can be left and entered) -> frontend/data/bg_*.bin
+python export_bikegraph.py     # compact bike graph (keeps the strongly connected core, so every pin can be left and entered) + street names for the directions -> frontend/data/bg_*.bin, names.json
 copy data\stations.json data\mrt_edges.json data\mrt_shapes.json frontend\data\
 node build_matrix.mjs          # station-to-station cycling times -> frontend/data/bike_matrix.json
 python compress_data.py        # gzip the graph for publishing
@@ -57,6 +57,7 @@ Bump `VERSION` in `frontend/sw.js` after changing data so installed apps refresh
 ```
 node tests/fares.test.mjs     # fare bands, early-bird discount, 2026 fare review, peak detection
 node tests/routing.test.mjs   # places that must be routable (airport, checkpoints...), random trips
+node tests/nav.test.mjs        # turn instructions, following a GPS position, train step cards
 node tests/entrances.test.mjs  # exit data sanity and the exit choice
 node tests/version.test.mjs   # page, script and service worker carry the same build id
 ```
@@ -78,6 +79,15 @@ There is no public timetable or transfer-time dataset for the MRT/LRT, so the ap
 - **Changing lines:** walking time plus the wait for the next train on the new line. Walking defaults to 3 min. [City Hall](https://landtransportguru.net/city-hall-station/), Raffles Place, Jurong East and Tanah Merah (Changi Airport branch) are cross-platform (1 min). Tampines (about 300 m linkway, 6.5 min) and [Newton](https://landtransportguru.net/newton-station/) (56 m linkway, 4 min) take longer, and the LRT at Bukit Panjang is about 200 m from the Downtown Line (4 min). These are estimates, and you can add or remove minutes per change in Settings.
 - **Boarding:** folding the bike, the gates and walking to the platform (2.5 min by default) plus the wait for the train. Leaving the system costs 2 min to exit and unfold.
 
+## Navigation
+
+Tapping *Start navigation* walks through the plan leg by leg.
+
+- **Cycling legs:** the turn-by-turn directions are worked out in the browser from the route: at each junction the change of heading (measured over about 12 m before and after it) decides *turn left / bear right / U-turn*, junctions closer than 30 m are merged (roundabouts, zig-zags) and the street name comes from OpenStreetMap (unnamed paths say *the cycle path* or *the footpath*). Your GPS position is projected onto the route to get the distance to the next turn and the time left. After three fixes more than 45 m (or the GPS accuracy) away from the route you are told you are off route and can re-plan from where you are.
+- **Train rides:** GPS rarely works underground, so the train part is a set of cards you move through yourself with the arrows (or by swiping, or the keyboard arrows). The direction on each line ("towards Pasir Ris") comes from the station numbers along the ride.
+- **The screen stays on** (Wake Lock) while navigating, where the browser supports it. Voice guidance uses the browser's speech synthesis and can be switched on with the speaker button.
+- Everything runs on the phone, so navigation keeps working with a weak signal once the map has loaded (map tiles themselves need data).
+
 ## Station exits
 
 Exits come from OpenStreetMap (`railway=subway_entrance` nodes with their letter or number), assigned to the nearest station: about 490 exits at 133 of the 190 stations (LRT stations and some MRT stations are not mapped with exits yet, and those simply show no exit). For each train ride the planner picks the exit that is **quickest to cycle to** from where you come from when boarding, and the exit **quickest to cycle away from** towards your next stop or destination when leaving, using the same bike router, and then draws the cycling leg to and from that exact exit. The data can be incomplete or out of date (closed exits, renumbering), so always check the signs in the station. Which train carriage or door to stand at is not published as open data, so the app does not suggest that.
@@ -87,6 +97,9 @@ Exits come from OpenStreetMap (`railway=subway_entrance` nodes with their letter
 Fares come from LTA's [MRT/LRT fare tables](https://sbstransit.com.sg/fares-and-concessions) (effective 27 Dec 2025): adult, student and senior/disability card fares by distance, with the weekday before-7:45-am discount. The app switches automatically to the [2026 fare review](https://mothership.sg/2026/09/fare-adjustment-2026/) fares from 26 Dec 2026 (adult +12 / +13 cents, concession +5 cents). The distance is the estimated track length, so a fare can be one band (about 5-10 cents) off. Every train ride is priced as its own journey, because cycling in between breaks the trip. Workfare, cash fares and bus fares are not included.
 
 ## Limitations
+
+- Turn instructions are generated from OpenStreetMap geometry, not by a commercial navigation engine, so they can occasionally be odd at complicated junctions or on unmapped paths. Keep your eyes on the road and use common sense.
+- The browser only gives a position while the page is open and the screen is on; the app asks the phone to keep the screen awake while you navigate. Other apps in the foreground will pause position updates.
 
 - Train times are estimates; there is no live disruption, crowding or timetable data. LRT loops are treated as running in both directions, although off-peak some loops run one way only.
 - Cycling routes come from OpenStreetMap and can differ from what is legal or comfortable on the ground. Always check the route on the map.

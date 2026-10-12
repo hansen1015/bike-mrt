@@ -36,7 +36,8 @@ class MinHeap {
 }
 
 export class Router {
-  constructor(nodesBuf, edgesBuf, geomBuf) {
+  // namesBuf / kindsBuf / nameList are optional: they give street names for turn-by-turn directions
+  constructor(nodesBuf, edgesBuf, geomBuf, namesBuf = null, kindsBuf = null, nameList = null) {
     const xy = new Int32Array(nodesBuf);
     this.N = xy.length / 2; this.xy = xy;
     this.geom = new Int32Array(geomBuf);
@@ -52,6 +53,7 @@ export class Router {
       this.elen[e] = dv.getFloat32(o + 16, true); this.epen[e] = dv.getFloat32(o + 20, true);
       this.esf[e] = dv.getUint8(o + 24); this.esb[e] = dv.getUint8(o + 25);
     }
+    this.enames = namesBuf ? new Uint16Array(namesBuf) : null; this.ekinds = kindsBuf ? new Uint8Array(kindsBuf) : null; this.nameList = nameList || [];
     this._buildAdjacency();
     this._buildGrid();
     this.cost = new Float64Array(this.N); this.time = new Float64Array(this.N);
@@ -207,35 +209,45 @@ export class Router {
     });
   }
 
-  // Full route with geometry from snap a to snap b.
+  edgeName(e) { return this.enames ? this.nameList[this.enames[e]] || '' : ''; }
+  edgeKind(e) { return this.ekinds ? this.ekinds[e] : 0; } // 0 road, 1 cycleway, 2 footpath / path, 3 service road or track
+
+  // Full route with geometry from snap a to snap b. Besides `coords`, `segs` lists the stretches of the route in order, each on
+  // one street: { name, kind, coords } (a seg's first point repeats the previous seg's last point). Used for turn-by-turn directions.
   route(a, b) {
     this._search(a, false, Infinity, [this.ea[b.e], this.eb[b.e]]);
     const r = this._finish(a, b);
     if (!r) return null;
+    const seg = (e, coords) => ({ name: this.edgeName(e), kind: this.edgeKind(e), coords });
     if (r.node === -1) { // same edge, direct
       const pts = this.edgePoints(a.e);
       const [lo, hi] = a.offA <= b.offA ? [a, b] : [b, a];
       const mid = pts.filter((_, i) => i > lo.i && i <= hi.i);
-      return { min: r.min, km: r.m / 1000, coords: [a.query, a.pt, ...(a.offA <= b.offA ? mid : mid.reverse()), b.pt, b.query] };
+      const coords = [a.query, a.pt, ...(a.offA <= b.offA ? mid : mid.reverse()), b.pt, b.query];
+      return { min: r.min, km: r.m / 1000, coords, segs: [seg(a.e, coords)] };
     }
     const arcs = [];
     for (let n = r.node; this.prev[n] !== -1; n = this.arcFrom(this.prev[n])) arcs.push(this.prev[n]);
     arcs.reverse();
-    const coords = [a.query, a.pt];
+    const coords = [a.query, a.pt], segs = [];
     const startNode = arcs.length ? this.arcFrom(arcs[0]) : r.node;
     // lead-in along the source edge
     const sp = this.edgePoints(a.e);
-    if (startNode === this.ea[a.e]) coords.push(...sp.slice(0, a.i + 1).reverse());
-    else coords.push(...sp.slice(a.i));
+    const lead = startNode === this.ea[a.e] ? sp.slice(0, a.i + 1).reverse() : sp.slice(a.i);
+    coords.push(...lead);
+    segs.push(seg(a.e, [a.query, a.pt, ...lead]));
     for (const arc of arcs) {
       const pts = this.edgePoints(arc >> 1);
-      coords.push(...((arc & 1) ? pts.slice().reverse() : pts).slice(1));
+      const oriented = (arc & 1) ? pts.slice().reverse() : pts;
+      coords.push(...oriented.slice(1));
+      segs.push(seg(arc >> 1, oriented));
     }
     // lead-out along the target edge
     const tp = this.edgePoints(b.e);
-    if (r.node === this.ea[b.e]) coords.push(...tp.slice(0, b.i + 1).slice(1));
-    else coords.push(...tp.slice(b.i, tp.length).reverse().slice(1));
+    const out = r.node === this.ea[b.e] ? tp.slice(0, b.i + 1) : tp.slice(b.i, tp.length).reverse();
+    coords.push(...out.slice(1));
     coords.push(b.pt, b.query);
-    return { min: r.min, km: r.m / 1000, coords };
+    segs.push(seg(b.e, [...out, b.pt, b.query]));
+    return { min: r.min, km: r.m / 1000, coords, segs };
   }
 }

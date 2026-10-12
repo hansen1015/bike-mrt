@@ -1,9 +1,10 @@
 // Keep BUILD in step with <meta name="build"> in index.html and VERSION in sw.js (tests/version.test.mjs checks it)
-const BUILD = 'v8';
+const BUILD = 'v9';
 import { Router } from './router.js';
 import { Planner } from './planner.js';
 import { railFare, sgClock, timeInfo, polyKm, FARE_TYPES } from './fares.js';
 import { searchPlaces } from './search.js';
+import { buildGuidance, locate, nextInstruction, railCards, fmtDist, spoken, dist as navDist, ICON } from './nav.js';
 
 const $ = id => document.getElementById(id);
 const L = window.L;
@@ -23,7 +24,7 @@ const DEFAULT_SETTINGS = {
   theme: 'auto', showNet: true, showLabels: true,
   speed: 16, maxRide: 15, allowMid: true, bikePen: 1,
   lines: ['NS', 'EW', 'NE', 'CC', 'DT', 'TE', 'BP', 'SK', 'PG'],
-  fold: 2.5, alight: 2, transferAdj: 0, transferPen: 0, depart: 'now', showFares: true, fareType: 'adult', alts: 3,
+  fold: 2.5, alight: 2, transferAdj: 0, transferPen: 0, depart: 'now', showFares: true, fareType: 'adult', alts: 3, voice: false,
 };
 // chip key -> actual line codes in the data (the airport branch rides with East-West, each LRT system has two loops)
 const LINE_GROUPS = { NS: ['NS'], EW: ['EW', 'CG'], NE: ['NE'], CC: ['CC'], DT: ['DT'], TE: ['TE'], BP: ['BP'], SK: ['SE', 'SW'], PG: ['PE', 'PW'] };
@@ -45,9 +46,10 @@ if ('serviceWorker' in navigator) {
 const bin = f => fetch('data/' + f + '.gz').then(r => new Response(r.body.pipeThrough(new DecompressionStream('gzip'))).arrayBuffer());
 const json = f => fetch('data/' + f).then(r => r.json());
 const dataReady = Promise.all([bin('bg_nodes.bin'), bin('bg_edges.bin'), bin('bg_geom.bin'),
-  json('stations.json'), json('mrt_edges.json'), json('mrt_shapes.json'), json('bike_matrix.json'), json('entrances.json')]);
+  json('stations.json'), json('mrt_edges.json'), json('mrt_shapes.json'), json('bike_matrix.json'), json('entrances.json'),
+  bin('bg_names.bin'), bin('bg_kinds.bin'), json('names.json')]);
 let planner = null;
-const plannerReady = dataReady.then(([n, e, g, st, ed, sh, bm, en]) => { planner = new Planner(new Router(n, e, g), st, ed, sh, bm, en); return planner; });
+const plannerReady = dataReady.then(([n, e, g, st, ed, sh, bm, en, nm, kd, nl]) => { planner = new Planner(new Router(n, e, g, nm, kd, nl), st, ed, sh, bm, en); return planner; });
 const landReady = json('sg_land.json');
 
 // ================= themes and map tiles =================
@@ -336,6 +338,10 @@ wireSearch('from'); wireSearch('to');
 
 // ================= planning =================
 let plans = [], activePlan = 0, replanTimer, routeBounds = null;
+// navigation state (declared here because the page layout code below reads it while loading)
+const nav = { on: false, plan: null, phases: [], i: 0, watch: null, along: 0, offCount: 0, follow: true, voice: false, wake: null, said: '', cards: [], cardI: 0, pos: null, done: false };
+window.__bikeMrtNav = nav; // handy for debugging and tests
+
 // ---- departure time: "now" or a picked time, always read as Singapore time ----
 let departAt = ''; // 'YYYY-MM-DDTHH:mm' when settings.depart === 'custom' (not saved between visits)
 const clockNow = () => sgClock(settings.depart === 'custom' ? departAt : '');
@@ -380,13 +386,6 @@ async function runPlan() {
 $('go').onclick = runPlan;
 const replanSoon = () => { if (plans.length) { clearTimeout(replanTimer); replanTimer = setTimeout(runPlan, 350); } };
 
-const ll = p => p[0].toFixed(6) + ',' + p[1].toFixed(6);
-// Google Maps cycling directions from the start to the end of one cycling leg (Google picks its own route)
-function gmaps(l) {
-  const a = l.coords[0] || l.from_pt, b = l.coords[l.coords.length - 1] || l.to_pt;
-  return 'https://www.google.com/maps/dir/?api=1&travelmode=bicycling&origin=' + ll(a) + '&destination=' + ll(b);
-}
-
 const fmt = m => { m = Math.round(m); return m >= 60 ? Math.floor(m / 60) + ' h ' + (m % 60) + ' min' : m + ' min'; };
 
 // fare for every rail leg: summed track length of its segments, priced when the leg starts (early-bird before 7:45 am on weekdays)
@@ -426,11 +425,12 @@ function render() {
       <div class="big">${fmt(p.total_min)}</div>
       <div class="split"><span>Cycling <b>${p.bike_km} km</b> · ${fmt(p.bike_min)}</span><span>MRT/LRT &amp; transfers <b>${fmt(p.mrt_min)}</b></span>${settings.showFares ? (p.fare > 0 ? `<span class="fare">Fare <b>≈ ${money(p.fare)}</b></span>` : '<span>No fare (cycling only)</span>') : ''}</div>
       ${p.legs.map(l => l.mode === 'bike'
-        ? `<div class="leg"><span class="tag bike">BIKE</span><span>${l.from} → ${l.to}<br><span style="color:var(--mute)">${l.km} km · ${fmt(l.min)}</span><br><a class="gbtn" href="${gmaps(l)}" target="_blank" rel="noopener">🗺️ Open in Google Maps</a></span></div>`
+        ? `<div class="leg"><span class="tag bike">BIKE</span><span>${l.from} → ${l.to}<br><span style="color:var(--mute)">${l.km} km · ${fmt(l.min)}</span></span></div>`
         : `<div class="leg"><span class="tag mrt" style="${l.segments.every(s => isLrt(s.line)) ? 'background:' + LRT_GREY : ''}">${l.segments.every(s => isLrt(s.line)) ? 'LRT' : 'MRT'}</span><span>${l.segments.map(s => `<b>${lineLabel(s.line)}</b> ${s.from} → ${s.to} (${s.stops} stops)`).join('<br>')}${exitsHtml(l)}<br><span style="color:var(--mute)">${fmt(l.min)} incl. fold &amp; wait${settings.showFares ? ` · ${l.railKm.toFixed(1)} km · <b class="fare">≈ ${money(l.fare)}</b>` : ''}</span></span></div>`).join('')}
+      <button type="button" class="startbtn" data-start="${i}">▶ Start navigation</button>
     </div>`).join('') + note + (plans.some(p => p.legs.some(l => l.enter || l.exit)) ? '<div class="hint">Exits are the ones quickest to reach on your route. Exit data comes from OpenStreetMap and may be incomplete, so check the signs in the station.</div>' : '');
   document.querySelectorAll('.plan').forEach(el => el.onclick = () => show(+el.dataset.i));
-  document.querySelectorAll('.gbtn').forEach(a => a.onclick = e => e.stopPropagation());
+  document.querySelectorAll('.startbtn').forEach(b => b.onclick = e => { e.stopPropagation(); startNav(+b.dataset.start); });
 }
 
 // circle split into two halves, one per line colour
@@ -482,8 +482,10 @@ function show(i) {
   });
   hideRouteNames();
   routeBounds = L.latLngBounds(pts);
-  if (sheetState === 'full') setSheet('half'); // reading the list at full height: drop to half so the route is visible
-  fitToSheet(routeBounds);
+  if (!nav.on) {
+    if (sheetState === 'full') setSheet('half'); // reading the list at full height: drop to half so the route is visible
+    fitToSheet(routeBounds);
+  }
 }
 
 // ================= settings sheet =================
@@ -581,12 +583,200 @@ const endDrag = () => {
 grab.addEventListener('pointerup', endDrag);
 grab.addEventListener('pointercancel', endDrag);
 const applySheetMode = () => {
+  if (nav.on) { document.documentElement.style.setProperty('--sheetH', '86px'); return; }
   if (mobileMQ.matches) setSheetPx(sheetPx(sheetState), false);
   else { sideEl.style.height = ''; sideEl.style.transition = ''; document.documentElement.style.removeProperty('--sheetH'); }
 };
 mobileMQ.addEventListener('change', applySheetMode);
 window.addEventListener('resize', applySheetMode);
 applySheetMode();
+
+// ================= navigation =================
+// Phases follow the plan: a cycling leg (map + turn-by-turn, following your GPS position), then a train ride (step cards you page
+// through with the arrows), then cycling again, until you arrive.
+map.createPane('nav'); map.getPane('nav').style.zIndex = 470;
+const navLayer = L.layerGroup().addTo(map);
+let posMarker = null, accCircle = null;
+const LINE_FULL = { NS: 'North-South Line', EW: 'East-West Line', CG: 'East-West Line (Changi Airport branch)', NE: 'North East Line', CC: 'Circle Line', DT: 'Downtown Line', TE: 'Thomson-East Coast Line' };
+const esc = t => String(t).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+function buildPhases(plan) {
+  const stationByName = new Map(railData.stations.map(s => [s.name, s]));
+  return plan.legs.map((l, k) => {
+    const nextLeg = plan.legs[k + 1];
+    if (l.mode === 'bike') {
+      const toRide = nextLeg && nextLeg.mode === 'mrt' ? nextLeg : null;
+      const target = toRide ? `${l.to}${toRide.enter ? ', Exit ' + toRide.enter.label : ''}` : 'your destination';
+      const segs = l.segs && l.segs.length ? l.segs : [{ name: '', kind: 0, coords: l.coords }];
+      return { type: 'bike', leg: l, target, toRide, g: buildGuidance(segs, { arrive: toRide ? `Arrive at ${target}` : 'You have arrived' }) };
+    }
+    return { type: 'rail', leg: l, cards: railCards(l, { stationByName, lineName: c => LINE_FULL[c] || lineLabel(c), moneyText: settings.showFares && l.fare ? money(l.fare) : '', nextIsBike: !!nextLeg && nextLeg.mode === 'bike' }) };
+  });
+}
+
+async function lockScreen() { try { if ('wakeLock' in navigator && nav.on) nav.wake = await navigator.wakeLock.request('screen'); } catch (e) {} }
+document.addEventListener('visibilitychange', () => { if (nav.on && document.visibilityState === 'visible') lockScreen(); });
+
+function startNav(i, keepWatch = false) {
+  if (!plans[i] || !railData) return;
+  show(i);
+  nav.on = true; nav.plan = plans[i]; nav.voice = settings.voice; nav.done = false;
+  nav.phases = buildPhases(nav.plan);
+  document.body.classList.add('navigating'); $('nav').hidden = false;
+  document.documentElement.style.setProperty('--sheetH', '86px');
+  map.getPane('route').style.opacity = 0.35;
+  $('nav-voice').textContent = nav.voice ? '🔊' : '🔇';
+  if (!keepWatch) startWatch();
+  lockScreen();
+  enterPhase(0);
+}
+
+function startWatch() {
+  if (nav.watch != null || !navigator.geolocation) { if (!navigator.geolocation) toast('GPS is not available on this device'); return; }
+  nav.watch = navigator.geolocation.watchPosition(onFix, err => {
+    $('nav-text').textContent = err.code === 1 ? 'Location is blocked. Allow it to follow your position' : 'Waiting for GPS…';
+  }, { enableHighAccuracy: true, maximumAge: 1000, timeout: 30000 });
+}
+
+function drawPos() {
+  const p = nav.pos; if (!p) return;
+  const at = [p.lat, p.lon];
+  if (!posMarker) {
+    posMarker = L.marker(at, { pane: 'nav', interactive: false, keyboard: false, icon: L.divIcon({ className: '', iconSize: [28, 28], iconAnchor: [14, 14], html: '<div class="me"><div class="me-arrow"></div></div>' }) }).addTo(map);
+    accCircle = L.circle(at, { pane: 'nav', radius: p.accuracy, weight: 1, color: '#2f7cf6', fillOpacity: 0.1, interactive: false }).addTo(map);
+  } else { posMarker.setLatLng(at); accCircle.setLatLng(at).setRadius(p.accuracy); }
+  const me = posMarker.getElement() && posMarker.getElement().querySelector('.me');
+  if (me) {
+    const has = p.heading != null && !Number.isNaN(p.heading);
+    me.querySelector('.me-arrow').style.display = has ? 'block' : 'none';
+    me.style.transform = has ? `rotate(${p.heading}deg)` : '';
+  }
+}
+
+function onFix(pos) {
+  if (!nav.on) return;
+  const { latitude: lat, longitude: lon, accuracy, heading } = pos.coords;
+  nav.pos = { lat, lon, accuracy, heading };
+  drawPos();
+  const ph = nav.phases[nav.i];
+  if (!ph || ph.type !== 'bike') return;
+  const f = locate(ph.g, lat, lon, nav.along);
+  if (f.cross <= Math.max(45, accuracy * 1.2)) { nav.offCount = 0; nav.along = Math.max(nav.along, f.along); $('nav-off').hidden = true; }
+  else if (accuracy < 80 && ++nav.offCount >= 3) $('nav-off').hidden = false;
+  updateBike();
+  const end = ph.g.pts[ph.g.pts.length - 1];
+  if (ph.g.total - nav.along < 25 || navDist(end, [lat, lon]) < 25) { nextPhase(); return; }
+  if (nav.follow) map.setView([lat, lon], Math.max(map.getZoom(), 17), { animate: true });
+}
+
+function updateBike() {
+  const ph = nav.phases[nav.i]; if (!ph || ph.type !== 'bike') return;
+  const g = ph.g, ni = nextInstruction(g, nav.along), d = Math.max(0, ni.along - nav.along);
+  $('nav-icon').textContent = ICON[ni.type] || '↑';
+  $('nav-dist').textContent = d < 25 && ni.type !== 'arrive' ? 'Now' : fmtDist(d);
+  $('nav-text').textContent = ni.text;
+  const rem = Math.max(0, g.total - nav.along);
+  $('nav-remain').textContent = `${fmtDist(rem)} · ${Math.max(1, Math.round(ph.leg.min * (g.total ? rem / g.total : 0)))} min`;
+  $('nav-sub').textContent = `to ${ph.target}`;
+  if (nav.voice && 'speechSynthesis' in window) {
+    const key = `${nav.i}:${g.ins.indexOf(ni)}:${d < 30 ? 'now' : d < 120 ? 'near' : d < 350 ? 'far' : 'early'}`;
+    if (!key.endsWith('early') && key !== nav.said) { nav.said = key; speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(spoken(ni, d)); u.lang = 'en-GB'; speechSynthesis.speak(u); }
+  }
+}
+
+function enterPhase(idx) {
+  nav.i = idx; nav.along = 0; nav.offCount = 0; nav.follow = true; nav.said = '';
+  navLayer.clearLayers(); $('nav-off').hidden = true;
+  const ph = nav.phases[idx];
+  if (!ph) { finishNav(); return; }
+  if (ph.type === 'bike') {
+    if (ph.g.pts.length < 2) { enterPhase(idx + 1); return; }
+    $('rail').hidden = true; $('nav-top').hidden = false; $('nav-bottom').hidden = false; $('nav-fabs').hidden = false;
+    const casing = css('--casing');
+    L.polyline(ph.leg.coords, { pane: 'nav', color: casing, weight: 13 }).addTo(navLayer);
+    L.polyline(ph.leg.coords, { pane: 'nav', color: css('--bike'), weight: 8 }).addTo(navLayer);
+    const end = ph.g.pts[ph.g.pts.length - 1];
+    L.marker(end, { pane: 'nav', interactive: false, keyboard: false, icon: L.divIcon({ className: '', iconSize: [30, 30], iconAnchor: [4, 28], html: '<div style="font-size:28px;line-height:1">🏁</div>' }) }).addTo(navLayer);
+    $('nav-arrived').textContent = ph.toRide ? 'At the station ›' : 'Arrived ›';
+    $('nav-icon').textContent = ICON.start; $('nav-dist').textContent = '-'; $('nav-text').textContent = nav.pos ? ph.g.ins[0].text : 'Waiting for GPS…';
+    updateBike();
+    if (nav.pos) map.setView([nav.pos.lat, nav.pos.lon], 17); else map.fitBounds(L.latLngBounds(ph.leg.coords), { paddingTopLeft: [20, 120], paddingBottomRight: [20, 100] });
+  } else {
+    $('nav-top').hidden = true; $('nav-bottom').hidden = true; $('nav-fabs').hidden = true;
+    nav.cards = ph.cards; nav.cardI = 0; nav.done = false;
+    renderRail(); $('rail').hidden = false;
+  }
+}
+
+const nextPhase = () => enterPhase(nav.i + 1);
+
+function finishNav() {
+  $('nav-top').hidden = true; $('nav-bottom').hidden = true; $('nav-fabs').hidden = true;
+  nav.done = true; nav.cards = [{ kind: 'done', line: '', title: 'You have arrived', lines: ['Safe riding!'], chips: [], stops: [] }]; nav.cardI = 0;
+  renderRail(); $('rail').hidden = false;
+}
+
+// ---- train step cards ----
+function renderRail() {
+  const c = nav.cards[nav.cardI], n = nav.cards.length;
+  $('rail-step').textContent = nav.done ? 'Done' : `Step ${nav.cardI + 1} of ${n}`;
+  const col = (c.line && lineColor(c.line)) || css('--accent');
+  const icon = { enter: '🚪', board: '🚇', change: '🔁', leave: '🚪', done: '🏁' }[c.kind];
+  let stops = '';
+  if (c.stops && c.stops.length > 1) {
+    const mid = c.stops.slice(1, -1);
+    stops = `<ol class="rc-stops"><li class="end">${esc(c.stops[0])}<small>get on here</small></li>${mid.length ? `<li class="mid"><details><summary>${mid.length} ${mid.length === 1 ? 'stop' : 'stops'} in between</summary><ul>${mid.map(s => `<li>${esc(s)}</li>`).join('')}</ul></details></li>` : ''}<li class="end">${esc(c.stops[c.stops.length - 1])}<small>get off here</small></li></ol>`;
+  }
+  $('rail-card').innerHTML = `<div class="rc" style="--lc:${col}"><div class="rc-icon">${icon}</div><h2>${esc(c.title)}</h2>${c.lines.map(t => `<p>${esc(t)}</p>`).join('')}<div class="rc-chips">${c.chips.map(t => `<span>${esc(t)}</span>`).join('')}</div>${stops}</div>`;
+  $('rail-dots').innerHTML = nav.done ? '' : nav.cards.map((_, k) => `<i class="${k === nav.cardI ? 'on' : ''}"></i>`).join('');
+  $('rail-prev').disabled = nav.done || nav.cardI === 0; $('rail-next').disabled = nav.done || nav.cardI === n - 1;
+  $('rail-prev').hidden = $('rail-next').hidden = nav.done;
+  const last = nav.done || nav.cardI === n - 1;
+  $('rail-go').hidden = !last;
+  $('rail-go').textContent = nav.done ? 'Done' : nav.i + 1 < nav.phases.length ? 'Continue cycling ›' : 'Finish ›';
+}
+const railStep = d => { const k = nav.cardI + d; if (nav.done || k < 0 || k >= nav.cards.length) return; nav.cardI = k; renderRail(); };
+$('rail-prev').onclick = () => railStep(-1);
+$('rail-next').onclick = () => railStep(1);
+$('rail-go').onclick = () => { if (nav.done) endNav(); else nextPhase(); };
+let swipeX = null;
+$('rail-card').addEventListener('touchstart', e => { swipeX = e.touches[0].clientX; }, { passive: true });
+$('rail-card').addEventListener('touchend', e => { if (swipeX == null) return; const dx = e.changedTouches[0].clientX - swipeX; swipeX = null; if (Math.abs(dx) > 55) railStep(dx < 0 ? 1 : -1); }, { passive: true });
+document.addEventListener('keydown', e => { if (nav.on && !$('rail').hidden) { if (e.key === 'ArrowRight') railStep(1); else if (e.key === 'ArrowLeft') railStep(-1); } });
+
+// ---- controls ----
+function endNav() {
+  nav.on = false;
+  if (nav.watch != null && navigator.geolocation) navigator.geolocation.clearWatch(nav.watch);
+  nav.watch = null; nav.pos = null;
+  try { if (nav.wake) nav.wake.release(); } catch (e) {} nav.wake = null;
+  if ('speechSynthesis' in window) speechSynthesis.cancel();
+  navLayer.clearLayers();
+  if (posMarker) { posMarker.remove(); accCircle.remove(); posMarker = accCircle = null; }
+  $('nav').hidden = true; $('rail').hidden = true;
+  document.body.classList.remove('navigating');
+  map.getPane('route').style.opacity = '';
+  applySheetMode(); setSheet('half');
+  if (plans.length) show(activePlan);
+}
+const confirmEnd = () => { if (confirm('End navigation?')) endNav(); };
+$('nav-end').onclick = confirmEnd;
+$('rail-end').onclick = confirmEnd;
+$('nav-arrived').onclick = nextPhase;
+$('nav-center').onclick = () => { nav.follow = true; if (nav.pos) map.setView([nav.pos.lat, nav.pos.lon], Math.max(map.getZoom(), 17)); };
+$('nav-voice').onclick = () => {
+  nav.voice = !nav.voice; settings.voice = nav.voice; saveSettings(); $('nav-voice').textContent = nav.voice ? '🔊' : '🔇';
+  if (nav.voice && 'speechSynthesis' in window) { const u = new SpeechSynthesisUtterance('Voice guidance on'); u.lang = 'en-GB'; speechSynthesis.speak(u); }
+};
+map.on('dragstart', () => { if (nav.on) nav.follow = false; });
+$('nav-reroute').onclick = () => { // plan again from where you are now, to the same destination
+  if (!nav.pos || !picked.to || !planner) return;
+  try {
+    const np = planner.plan({ lat: nav.pos.lat, lon: nav.pos.lon }, { lat: picked.to.lat, lon: picked.to.lon }, planOptions());
+    if (!np.length) throw new Error('none');
+    plans = np; activePlan = 0; render(); startNav(0, true); toast('New route found');
+  } catch (e) { toast('Could not find a new route from here'); }
+};
 
 // ================= feedback e-mail =================
 // assembled here (not written in the HTML) so it is not sitting in the page for address scrapers

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <title>Bike-MRT</title>
-<meta name="build" content="v8">
+<meta name="build" content="v9">
 <script>
   // safety net: if something breaks (for example after an update left old and new files mixed), show a banner with a one-tap fix
   (function () {
@@ -94,8 +94,8 @@
   .leg { display:flex; gap:8px; padding:5px 0; border-top:1px solid var(--line); font-size:13px; }
   .tag { flex:none; width:44px; text-align:center; border-radius:5px; color:#fff; font-size:11px; font-weight:700; padding:2px 0; height:fit-content; }
   .tag.bike { background:var(--bike); } .tag.mrt { background:var(--mrt); }
-  .gbtn { display:inline-flex; align-items:center; gap:6px; margin-top:7px; padding:7px 12px; border-radius:8px; background:var(--accent); color:var(--on-accent); font:600 13px system-ui; text-decoration:none; }
-  .gbtn:hover { filter:brightness(1.08); }
+  [hidden] { display:none !important; }
+  .startbtn { margin-top:12px; padding:12px; font-size:16px; }
   @keyframes spin { to { transform:rotate(360deg); } }
   .pinbtn.loading { position:relative; color:transparent; pointer-events:none; }
   .pinbtn.loading::after { content:""; position:absolute; inset:0; margin:auto; width:18px; height:18px; border:3px solid var(--line); border-top-color:var(--accent); border-radius:50%; animation:spin .8s linear infinite; }
@@ -116,6 +116,49 @@
   .exit-wrap { background:none; border:0; }
   .exit-pill { position:absolute; left:7px; top:-9px; background:var(--card); color:var(--ink); border:2px solid var(--accent); border-radius:11px; padding:0 7px; font:700 11px/18px system-ui; white-space:nowrap; box-shadow:0 1px 4px rgba(0,0,0,.35); }
   .exits { color:var(--ink); }
+  /* ---------- navigation ---------- */
+  body.navigating #side { display:none; }
+  body.navigating .leaflet-top { top:108px; }
+  body.navigating #toast { top:118px; transform:translate(-50%,-220px); }
+  body.navigating #toast.show { transform:translate(-50%,0); }
+  #nav-top { position:fixed; top:0; left:0; right:0; z-index:1500; display:flex; gap:14px; align-items:center; padding:calc(10px + env(safe-area-inset-top)) 14px 12px; background:var(--accent); color:var(--on-accent); box-shadow:0 3px 14px rgba(0,0,0,.35); }
+  #nav-icon { font-size:46px; line-height:1; width:56px; text-align:center; flex:none; font-weight:700; }
+  #nav-dist { font-size:30px; font-weight:800; line-height:1.05; }
+  #nav-text { font-size:18px; font-weight:600; line-height:1.2; }
+  #nav-bottom { position:fixed; bottom:0; left:0; right:0; z-index:1500; display:flex; align-items:center; gap:8px; padding:10px 12px calc(10px + env(safe-area-inset-bottom)); background:var(--card); border-top:1px solid var(--line); box-shadow:0 -3px 14px rgba(0,0,0,.2); }
+  #nav-stats { flex:1; min-width:0; } #nav-stats b { font-size:19px; display:block; } #nav-stats small { color:var(--mute); font-size:13px; display:block; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .navbtn { margin:0; width:auto; min-width:46px; height:46px; padding:0 12px; border-radius:12px; background:var(--bg); color:var(--ink); border:1px solid var(--line); font-size:19px; flex:none; }
+  #nav-fabs { position:fixed; right:12px; bottom:calc(122px + env(safe-area-inset-bottom)); z-index:1500; display:flex; flex-direction:column; gap:10px; }
+  .fab { margin:0; width:50px; height:50px; padding:0; border-radius:50%; background:var(--card); color:var(--ink); border:1px solid var(--line); font-size:21px; box-shadow:0 3px 12px rgba(0,0,0,.35); }
+  #nav-stats b { white-space:nowrap; }
+  .navbtn.wide { font-size:14px; font-weight:700; background:var(--accent); color:var(--on-accent); border-color:transparent; }
+  .navbtn.danger { color:var(--mrt); font-size:14px; font-weight:700; }
+  #nav-off { position:fixed; top:calc(96px + env(safe-area-inset-top)); left:12px; right:12px; z-index:1450; display:flex; align-items:center; justify-content:space-between; gap:10px; background:#b42318; color:#fff; border-radius:12px; padding:9px 12px; font-weight:600; box-shadow:0 4px 14px rgba(0,0,0,.35); }
+  #nav-off button { margin:0; width:auto; padding:7px 12px; background:#fff; color:#b42318; font-size:14px; flex:none; }
+  .me { position:relative; width:22px; height:22px; border-radius:50%; background:#2f7cf6; border:3px solid #fff; box-shadow:0 0 0 2px rgba(47,124,246,.4), 0 1px 6px rgba(0,0,0,.45); }
+  .me .me-arrow { position:absolute; left:50%; top:-15px; margin-left:-7px; border:7px solid transparent; border-bottom:12px solid #2f7cf6; display:none; }
+  /* train steps: one card per step, arrows left and right */
+  #rail { position:fixed; inset:0; z-index:2000; background:var(--bg); display:flex; flex-direction:column; padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom); }
+  #rail-head { display:flex; justify-content:space-between; align-items:center; padding:12px 14px; font-weight:700; color:var(--mute); }
+  #rail-main { flex:1; min-height:0; display:flex; align-items:stretch; gap:6px; padding:0 8px; }
+  .rail-arrow { align-self:center; width:48px; height:92px; margin:0; padding:0; border-radius:14px; background:var(--card); color:var(--ink); border:1px solid var(--line); font-size:34px; flex:none; }
+  .rail-arrow:disabled { opacity:.25; }
+  #rail-card { flex:1; min-width:0; overflow-y:auto; display:flex; flex-direction:column; touch-action:pan-y; }
+  .rc { margin:auto 0; background:var(--card); border:1px solid var(--line); border-top:9px solid var(--lc, var(--accent)); border-radius:16px; padding:18px 18px 16px; text-align:left; box-shadow:var(--shadow); }
+  .rc-icon { font-size:40px; line-height:1; }
+  .rc h2 { font-size:25px; line-height:1.15; margin:8px 0 10px; }
+  .rc p { font-size:17px; margin:7px 0; }
+  .rc-chips span { display:inline-block; background:var(--bg); border:1px solid var(--line); border-radius:15px; padding:4px 12px; margin:8px 8px 0 0; font-weight:700; font-size:15px; }
+  .rc-stops { list-style:none; margin:16px 0 0; padding:0 0 0 18px; border-left:5px solid var(--lc, var(--accent)); }
+  .rc-stops li { position:relative; padding:5px 0 5px 12px; font-size:16px; }
+  .rc-stops li.end { font-weight:700; }
+  .rc-stops li small { display:block; color:var(--mute); font-weight:500; font-size:13px; }
+  .rc-stops li::before { content:""; position:absolute; left:-27px; top:12px; width:12px; height:12px; border-radius:50%; background:var(--card); border:3px solid var(--lc, var(--accent)); }
+  .rc-stops li.mid::before { display:none; }
+  .rc-stops summary { cursor:pointer; color:var(--mute); } .rc-stops ul { margin:6px 0 2px; padding-left:18px; font-size:15px; }
+  #rail-dots { display:flex; justify-content:center; gap:8px; padding:12px 0 4px; }
+  #rail-dots i { width:9px; height:9px; border-radius:50%; background:var(--line); } #rail-dots i.on { background:var(--accent); transform:scale(1.35); }
+  #rail-go { margin:8px 14px 16px; padding:14px; font-size:17px; width:calc(100% - 28px); }
   #fatal { position:fixed; left:12px; right:12px; bottom:12px; z-index:4000; display:flex; gap:12px; align-items:center; justify-content:space-between; background:var(--card); color:var(--ink); border:1px solid var(--mrt); border-radius:12px; padding:10px 12px; box-shadow:var(--shadow); font-size:14px; }
   #fatal small { display:block; color:var(--mute); font-size:12px; }
   #fatal button { margin:0; width:auto; padding:8px 12px; flex:none; font-size:13px; }
@@ -208,6 +251,33 @@
 <div id="map"></div>
 <div id="toast" role="status"></div>
 
+<div id="nav" hidden>
+  <div id="nav-top" hidden>
+    <div id="nav-icon" aria-hidden="true">↑</div>
+    <div><div id="nav-dist">-</div><div id="nav-text">Waiting for GPS…</div></div>
+  </div>
+  <div id="nav-fabs" hidden>
+    <button type="button" class="fab" id="nav-voice" aria-label="Voice guidance" title="Voice guidance">🔇</button>
+    <button type="button" class="fab" id="nav-center" aria-label="Centre on me" title="Centre on me">◎</button>
+  </div>
+  <div id="nav-off" hidden><span>You are off the route</span><button type="button" id="nav-reroute">Re-route</button></div>
+  <div id="nav-bottom" hidden>
+    <div id="nav-stats"><b id="nav-remain">-</b><small id="nav-sub"></small></div>
+    <button type="button" class="navbtn wide" id="nav-arrived">At the station ›</button>
+    <button type="button" class="navbtn danger" id="nav-end">End</button>
+  </div>
+  <div id="rail" hidden>
+    <div id="rail-head"><span id="rail-step">Step 1</span><button type="button" class="navbtn danger" id="rail-end">End</button></div>
+    <div id="rail-main">
+      <button type="button" class="rail-arrow" id="rail-prev" aria-label="Previous step">‹</button>
+      <div id="rail-card" aria-live="polite"></div>
+      <button type="button" class="rail-arrow" id="rail-next" aria-label="Next step">›</button>
+    </div>
+    <div id="rail-dots"></div>
+    <button type="button" id="rail-go">Continue cycling ›</button>
+  </div>
+</div>
+
 <div id="intro" aria-modal="true" role="dialog" aria-label="Welcome to Bike-MRT">
   <div class="sheet intro">
     <div class="hero">
@@ -218,7 +288,7 @@
       <li><span><b>Choose where from and to.</b> Type an address or postal code, tap 📍 and then the map, or press 🎯 to start from where you are. Pins can be dragged.</span></li>
       <li><span><b>Tap “Find fastest route”.</b> The app compares cycling the whole way, taking trains, and mixes of both, even cycle → train → cycle → train → cycle.</span></li>
       <li><span><b>Read the plan.</b> Green <b>BIKE</b> legs are cycling, coloured <b>MRT</b> / <b>LRT</b> legs are trains, with an estimated fare and the station exits to enter and leave by. Tap a plan to see it on the map.</span></li>
-      <li><span><b>Navigate each ride.</b> Every cycling leg has an <b>Open in Google Maps</b> button for turn-by-turn directions.</span></li>
+      <li><span><b>Navigate each ride.</b> Tap <b>Start navigation</b>: follow the map and the turn-by-turn directions while you cycle, then step through the MRT directions with the arrows and carry on cycling.</span></li>
       <li><span><b>Make it yours in ⚙️ Settings.</b> Dark mode, which lines to use, riding speed, longest ride, waiting and transfer times.</span></li>
     </ol>
     <div class="install" id="install-box" hidden>

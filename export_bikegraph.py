@@ -4,6 +4,8 @@ Output (frontend/data/):
   bg_nodes.bin  Int32 [lat1e6, lon1e6] per node
   bg_edges.bin  per edge: Int32 a, b, geomStart, geomCount | Float32 lenM, penalty | Uint8 spdFwd, spdBwd, pad, pad
   bg_geom.bin   Int32 [lat1e6, lon1e6] interior shape points (a -> b order)
+  bg_names.bin  Uint16 street-name id per edge (0 = no name);  names.json = the list of names
+  bg_kinds.bin  Uint8 per edge: 0 road, 1 cycleway, 2 footpath / path, 3 service road or track
   bg_meta.json  counts
 Graph is contracted (only junctions/endpoints are nodes). Speeds in km/h, 0 = direction not rideable.
 """
@@ -59,6 +61,16 @@ def classify(t):
     return f, b, pen
 
 
+def describe(t):
+    """(street name, kind) used for turn-by-turn directions."""
+    hw = t.get("highway", "")
+    name = (t.get("name") or t.get("name:en") or "").strip()
+    if not name and hw in ROAD and hw not in ("cycleway", "service", "track"):
+        name = (t.get("ref") or "").strip()  # numbered roads / expressways without a name
+    kind = 1 if hw == "cycleway" else 2 if hw in FOOTISH else 3 if hw in ("service", "track") else 0
+    return name, kind
+
+
 coords, ways = {}, []
 for o in osmium.FileProcessor("data/Singapore.osm.pbf").with_locations():
     if not o.is_way():
@@ -71,11 +83,11 @@ for o in osmium.FileProcessor("data/Singapore.osm.pbf").with_locations():
         continue
     for n in o.nodes:
         coords[n.ref] = (n.lat, n.lon)
-    ways.append((refs, c))
+    ways.append((refs, c, describe(o.tags)))
 print(len(ways), "rideable ways,", len(coords), "nodes")
 
 use = collections.Counter()
-for refs, _ in ways:
+for refs, *_ in ways:
     for r in refs:
         use[r] += 1
     use[refs[0]] += 1
@@ -87,13 +99,13 @@ def hav(p, q):
 
 
 edges = []  # (a_ref, b_ref, length, [interior (lat,lon)], spdF, spdB, pen)
-for refs, (f, b, pen) in ways:
+for refs, (f, b, pen), (wname, wkind) in ways:
     start, length, interior = refs[0], 0.0, []
     for prev, cur in zip(refs, refs[1:]):
         length += hav(coords[prev], coords[cur])
         if use[cur] > 1 and cur != start or cur == refs[-1]:
             if cur != start or length > 20:
-                edges.append((start, cur, length, interior, f, b, pen))
+                edges.append((start, cur, length, interior, f, b, pen, wname, wkind))
             start, length, interior = cur, 0.0, []
         else:
             interior.append(coords[cur])
@@ -125,7 +137,7 @@ for e in edges:
         ids.setdefault(r, len(ids))
 n = len(ids)
 adj = [[] for _ in range(n)]
-for a_, b_, _, _, f_, bw_, _ in edges:
+for a_, b_, _, _, f_, bw_, *_ in edges:
     if f_:
         adj[ids[a_]].append(ids[b_])
     if bw_:
@@ -182,9 +194,17 @@ for a, b, *_ in edges:
             node_xy.append((round(coords[r][0] * 1e6), round(coords[r][1] * 1e6)))
 
 geom, ebuf = [], bytearray()
-for a, b, length, interior, f, bw, pen in edges:
+name_ids, names, name_col, kind_col = {"": 0}, [""], [], []
+for a, b, length, interior, f, bw, pen, wname, wkind in edges:
     ebuf += struct.pack("<iiiiffBBBB", node_ids[a], node_ids[b], len(geom), len(interior), length, pen, f, bw, 0, 0)
     geom += [(round(la * 1e6), round(lo * 1e6)) for la, lo in interior]
+    if wname not in name_ids and len(names) < 65535:
+        name_ids[wname] = len(names); names.append(wname)
+    name_col.append(name_ids.get(wname, 0)); kind_col.append(wkind)
+np.array(name_col, dtype="<u2").tofile(OUT + "bg_names.bin")
+np.array(kind_col, dtype="u1").tofile(OUT + "bg_kinds.bin")
+json.dump(names, open(OUT + "names.json", "w", encoding="utf8"), ensure_ascii=False, separators=(",", ":"))
+print(len(names), "distinct street names;", sum(1 for n in name_col if n), "of", len(name_col), "edges have a name")
 
 np.array(node_xy, dtype="<i4").tofile(OUT + "bg_nodes.bin")
 open(OUT + "bg_edges.bin", "wb").write(bytes(ebuf))

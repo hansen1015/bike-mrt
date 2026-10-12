@@ -155,10 +155,10 @@ export class Planner {
         const leg = legs[legs.length - 1], seg = leg.segments, last = seg[seg.length - 1];
         const shape = info.rev ? this.shapes[info.eid].slice().reverse() : this.shapes[info.eid];
         const nu = this._name(u), nv = this._name(v);
-        if (!last || last.line !== info.line) seg.push({ line: info.line, from: nu, to: nv, stops: 1, coords: [...shape], stop_pts: [this.byName[nu], this.byName[nv]], stop_names: [nu, nv] });
-        else { last.to = nv; last.stops++; last.coords.push(...shape.slice(1)); last.stop_pts.push(this.byName[nv]); last.stop_names.push(nv); }
+        if (!last || last.line !== info.line) { seg.push({ line: info.line, from: nu, to: nv, stops: 1, min: real, change_min: leg._pendingChange || 0, coords: [...shape], stop_pts: [this.byName[nu], this.byName[nv]], stop_names: [nu, nv] }); leg._pendingChange = 0; }
+        else { last.to = nv; last.stops++; last.min += real; last.coords.push(...shape.slice(1)); last.stop_pts.push(this.byName[nv]); last.stop_names.push(nv); }
         leg.min += real;
-      } else if (m === "transfer") legs[legs.length - 1].min += real;
+      } else if (m === "transfer") { const l = legs[legs.length - 1]; l.min += real; l._pendingChange = real; }
       else if (m === "alight") { const l = legs[legs.length - 1]; l.min += real; l.to = this._name(u); l._v = u; }
     }
     const merged = [];
@@ -171,7 +171,10 @@ export class Planner {
     const total = merged.reduce((s, l) => s + l.min, 0);
     const bikeMin = merged.filter(l => l.mode === "bike").reduce((s, l) => s + l.min, 0);
     const bikeKm = merged.filter(l => l.mode === "bike").reduce((s, l) => s + l.km, 0);
-    merged.forEach(l => { l.min = +l.min.toFixed(1); if (l.km !== undefined) l.km = +l.km.toFixed(2); });
+    merged.forEach(l => {
+      l.min = +l.min.toFixed(1); if (l.km !== undefined) l.km = +l.km.toFixed(2);
+      if (l.segments) { delete l._pendingChange; l.segments.forEach(sg => { sg.min = +sg.min.toFixed(1); sg.change_min = +sg.change_min.toFixed(1); }); }
+    });
     return { total_min: +total.toFixed(1), bike_km: +bikeKm.toFixed(2), bike_min: +bikeMin.toFixed(1), mrt_min: +(total - bikeMin).toFixed(1), legs: merged };
   }
 
@@ -221,13 +224,13 @@ export class Planner {
       if (l.mode === "bike") {
         const prevRide = legs[i - 1] && legs[i - 1].mode === "mrt" ? legs[i - 1] : null;
         const nextRide = legs[i + 1] && legs[i + 1].mode === "mrt" ? legs[i + 1] : null;
-        l.coords = []; let min = 0, km = 0, ok = true;
+        l.coords = []; l.segs = []; let min = 0, km = 0, ok = true;
         l.parts.forEach(([u, v], k) => {
           let a = S(u), b = S(v);
           if (k === 0 && prevRide && prevRide.exit) a = prevRide.exit.snap;
           if (k === l.parts.length - 1 && nextRide && nextRide.enter) b = nextRide.enter.snap;
           const r = this.router.route(a, b) || this.router.route(S(u), S(v));
-          if (r) { l.coords.push(...r.coords); min += r.min * scale; km += r.km; } else ok = false;
+          if (r) { l.coords.push(...r.coords); l.segs.push(...r.segs); min += r.min * scale; km += r.km; } else ok = false;
         });
         if (ok && l.coords.length) { l.min = +min.toFixed(1); l.km = +km.toFixed(2); } // keep the planner's numbers if a part could not be re-routed
         delete l.parts; delete l._exitSnap;
