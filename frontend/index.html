@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <title>Bike-MRT</title>
-<meta name="build" content="v13">
+<meta name="build" content="v14">
 <script>
   // safety net: if something breaks (for example after an update left old and new files mixed), show a banner with a one-tap fix
   (function () {
@@ -126,7 +126,19 @@
   .exits { color:var(--ink); }
   /* ---------- navigation ---------- */
   body.navigating #side { display:none; }
-  body.navigating .leaflet-top { top:108px; }
+  body.navigating .leaflet-top { display:none; }
+  /* heading-up: the map element is made bigger than the screen and turned, so no blank corners show while it rotates */
+  #map { --unrot: 0deg; }
+  #map.rotating { transition:transform .6s linear; will-change:transform; }
+  .pinwrap, .flagwrap { transform:rotate(var(--unrot)); transition:transform .6s linear; }
+  .pinwrap { transform-origin:15px 28px; } .flagwrap { transform-origin:4px 28px; }
+  .exit-pill { transform:rotate(var(--unrot)); transform-origin:-7px 9px; transition:transform .6s linear; }
+  body.headingup .leaflet-tooltip-pane, body.headingup .stn-label, body.headingup .leaflet-control-container { display:none; }
+  #attr-static { display:none; position:fixed; left:8px; bottom:calc(92px + env(safe-area-inset-bottom)); z-index:1400; font-size:11px; background:color-mix(in srgb, var(--card) 80%, transparent); color:var(--mute); padding:1px 6px; border-radius:6px; }
+  body.headingup #attr-static { display:block; }
+  .fab.on { background:var(--accent); color:var(--on-accent); }
+  @keyframes pulse { 50% { box-shadow:0 0 0 7px rgba(60,207,145,.35); } }
+  .navbtn.attn { animation:pulse 1.4s infinite; }
   body.navigating #toast { top:118px; transform:translate(-50%,-220px); }
   body.navigating #toast.show { transform:translate(-50%,0); }
   #nav-top { position:fixed; top:0; left:0; right:0; z-index:1500; display:flex; gap:14px; align-items:center; padding:calc(10px + env(safe-area-inset-top)) 14px 12px; background:var(--accent); color:var(--on-accent); box-shadow:0 3px 14px rgba(0,0,0,.35); }
@@ -168,6 +180,7 @@
   #rail-dots { display:flex; justify-content:center; gap:8px; flex:none; min-width:60px; }
   #rail-dots i { width:9px; height:9px; border-radius:50%; background:var(--line); } #rail-dots i.on { background:var(--accent); transform:scale(1.35); }
   .rc-actions { margin-top:16px; display:flex; gap:8px; flex-wrap:wrap; }
+  .rc-actions a { margin:0; padding:10px 14px; border-radius:8px; background:var(--accent); color:var(--on-accent); font:600 14px system-ui; text-decoration:none; display:inline-block; }
   .rc-actions button { margin:0; width:auto; padding:10px 14px; background:var(--bg); color:var(--ink); border:1px solid var(--line); font-size:14px; }
   #rail-go { margin:10px 14px 0; padding:14px; font-size:17px; width:calc(100% - 28px); }
   #fatal { position:fixed; left:12px; right:12px; bottom:12px; z-index:4000; display:flex; gap:12px; align-items:center; justify-content:space-between; background:var(--card); color:var(--ink); border:1px solid var(--mrt); border-radius:12px; padding:10px 12px; box-shadow:var(--shadow); font-size:14px; }
@@ -262,6 +275,7 @@
 </div>
 <div id="map"></div>
 <div id="toast" role="status"></div>
+<div id="attr-static">© OpenStreetMap contributors</div>
 
 <div id="nav" hidden>
   <div id="nav-top" hidden>
@@ -269,6 +283,9 @@
     <div><div id="nav-dist">-</div><div id="nav-text">Waiting for GPS…</div></div>
   </div>
   <div id="nav-fabs" hidden>
+    <button type="button" class="fab" id="nav-rotate" aria-label="Turn the map with my direction" aria-pressed="false" title="Turn the map with my direction">🧭</button>
+    <button type="button" class="fab" id="nav-zin" aria-label="Zoom in">+</button>
+    <button type="button" class="fab" id="nav-zout" aria-label="Zoom out">−</button>
     <button type="button" class="fab" id="nav-center" aria-label="Centre on me" title="Centre on me">◎</button>
   </div>
   <div id="nav-off" hidden><span>You are off the route</span><button type="button" id="nav-reroute">Re-route</button></div>

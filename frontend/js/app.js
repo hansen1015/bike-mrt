@@ -1,11 +1,11 @@
 // Keep BUILD in step with <meta name="build"> in index.html and VERSION in sw.js (tests/version.test.mjs checks it)
-const BUILD = 'v13';
+const BUILD = 'v14';
 import { Router } from './router.js';
 import { Planner } from './planner.js';
 import { railFare, sgClock, timeInfo, polyKm, FARE_TYPES } from './fares.js';
 import { searchPlaces } from './search.js';
 import { Recorder } from './activity.js';
-import { buildGuidance, locate, nextInstruction, railCards, fmtDist, dist as navDist, ICON } from './nav.js';
+import { buildGuidance, locate, nextInstruction, railCards, fmtDist, dist as navDist, bearing as navBearing, ICON } from './nav.js';
 
 const $ = id => document.getElementById(id);
 const L = window.L;
@@ -219,7 +219,7 @@ function setPoint(key, lat, lon, pan) {
   if (!markers[key]) {
     markers[key] = L.marker([lat, lon], { draggable: true, title: key === 'from' ? 'Start' : 'Destination',
       icon: L.divIcon({ className: '', iconSize: [30, 30], iconAnchor: [15, 28],
-        html: `<div style="background:${key === 'from' ? '#0b6e4f' : '#d92d20'};color:#fff;width:30px;height:30px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);display:grid;place-items:center"><b style="transform:rotate(45deg)">${key === 'from' ? 'A' : 'B'}</b></div>` }) }).addTo(map);
+        html: `<div class="pinwrap"><div style="background:${key === 'from' ? '#0b6e4f' : '#d92d20'};color:#fff;width:30px;height:30px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);display:grid;place-items:center"><b style="transform:rotate(45deg)">${key === 'from' ? 'A' : 'B'}</b></div></div>` }) }).addTo(map);
     markers[key].on('dragend', e => {
       const p = e.target.getLatLng();
       if (setPoint(key, p.lat, p.lng)) $(key).value = 'Pin (' + p.lat.toFixed(5) + ', ' + p.lng.toFixed(5) + ')';
@@ -248,6 +248,7 @@ function setPicking(key) {
 $('pin-from').onclick = () => setPicking('from');
 $('pin-to').onclick = () => setPicking('to');
 map.on('click', e => {
+  if (nav.on) return;
   // with no button active: a tap on the map sets the destination (the start is usually Binjai Hall)
   const key = picking || 'to';
   if (setPoint(key, e.latlng.lat, e.latlng.lng)) $(key).value = 'Pin (' + e.latlng.lat.toFixed(5) + ', ' + e.latlng.lng.toFixed(5) + ')';
@@ -372,7 +373,7 @@ wireSearch('from'); wireSearch('to');
 // ================= planning =================
 let plans = [], activePlan = 0, replanTimer, routeBounds = null;
 // navigation state (declared here because the page layout code below reads it while loading)
-const nav = { on: false, plan: null, phases: [], i: 0, watch: null, along: 0, offCount: 0, follow: true, wake: null, cards: [], cardI: 0, pos: null, done: false, rec: new Recorder() };
+const nav = { on: false, plan: null, phases: [], i: 0, watch: null, along: 0, offCount: 0, follow: true, wake: null, cards: [], cardI: 0, pos: null, prev: null, done: false, arrived: false, headingUp: false, bearing: 0, rec: new Recorder() };
 window.__bikeMrtNav = nav; // handy for debugging and tests
 
 // ---- departure time: "now" or a picked time, always read as Singapore time ----
@@ -696,29 +697,48 @@ function drawPos() {
   if (me) {
     const has = p.heading != null && !Number.isNaN(p.heading);
     me.querySelector('.me-arrow').style.display = has ? 'block' : 'none';
-    me.style.transform = has ? `rotate(${p.heading}deg)` : '';
+    me.style.transform = has ? `rotate(${p.heading}deg)` : '';   // inside a turned map this ends up pointing up
   }
 }
 
 function onFix(pos) {
   if (!nav.on) return;
-  const { latitude: lat, longitude: lon, accuracy, heading } = pos.coords;
+  const { latitude: lat, longitude: lon, accuracy } = pos.coords;
+  // direction of travel: the phone's heading, or worked out from the last few metres moved
+  let heading = pos.coords.heading, fromMoves = false;
+  const here = [lat, lon];
+  if (nav.prev) {
+    const moved = navDist([nav.prev.lat, nav.prev.lon], here);
+    if ((heading == null || Number.isNaN(heading)) && moved >= 6) { heading = navBearing([nav.prev.lat, nav.prev.lon], here); fromMoves = true; }
+    if (moved >= 6) nav.prev = { lat, lon };
+  } else nav.prev = { lat, lon };
   nav.pos = { lat, lon, accuracy, heading };
+  if (nav.headingUp && heading != null && !Number.isNaN(heading) && (fromMoves || pos.coords.speed == null || pos.coords.speed > 0.8)) turnMap(heading);
   drawPos();
   const ph = nav.phases[nav.i];
   if (!ph || ph.type !== 'bike') return;
   nav.rec.addFix({ t: pos.timestamp, lat, lon, acc: accuracy, alt: pos.coords.altitude, speed: pos.coords.speed });
   const f = locate(ph.g, lat, lon, nav.along);
   if (f.cross <= Math.max(45, accuracy * 1.2)) { nav.offCount = 0; nav.along = Math.max(nav.along, f.along); $('nav-off').hidden = true; }
-  else if (accuracy < 80 && ++nav.offCount >= 3) $('nav-off').hidden = false;
+  else if (!nav.arrived && accuracy < 80 && ++nav.offCount >= 3) $('nav-off').hidden = false;
   updateBike();
   const end = ph.g.pts[ph.g.pts.length - 1];
-  if (ph.g.total - nav.along < 25 || navDist(end, [lat, lon]) < 25) { nextPhase(); return; }
-  if (nav.follow) map.setView([lat, lon], Math.max(map.getZoom(), 17), { animate: true });
+  if (ph.g.total - nav.along < 25 || navDist(end, [lat, lon]) < 25) {
+    if (ph.toRide) { nextPhase(); return; }                 // at the station: on to the train steps
+    if (!nav.arrived) {                                     // at the destination: keep recording until you press Stop
+      nav.arrived = true; $('nav-arrived').classList.add('attn'); $('nav-off').hidden = true;
+      toast('You have arrived. Still recording: press Stop & save when you are done'); updateBike();
+    }
+  }
+  if (nav.follow) followPos(lat, lon);
 }
 
 function updateBike() {
   const ph = nav.phases[nav.i]; if (!ph || ph.type !== 'bike') return;
+  if (nav.arrived) {
+    $('nav-icon').textContent = '🏁'; $('nav-dist').textContent = 'Arrived'; $('nav-text').textContent = 'Still recording. Press Stop & save when you are done';
+    $('nav-remain').textContent = 'You have arrived'; $('nav-sub').textContent = 'Recording continues'; return;
+  }
   const g = ph.g, ni = nextInstruction(g, nav.along), d = Math.max(0, ni.along - nav.along);
   $('nav-icon').textContent = ICON[ni.type] || '↑';
   $('nav-dist').textContent = d < 25 && ni.type !== 'arrive' ? 'Now' : fmtDist(d);
@@ -729,7 +749,7 @@ function updateBike() {
 }
 
 function enterPhase(idx) {
-  nav.i = idx; nav.along = 0; nav.offCount = 0; nav.follow = true;
+  nav.i = idx; nav.along = 0; nav.offCount = 0; nav.follow = true; nav.arrived = false; $('nav-arrived').classList.remove('attn');
   navLayer.clearLayers(); $('nav-off').hidden = true;
   const ph = nav.phases[idx];
   if (!ph) { finishNav(); return; }
@@ -741,8 +761,8 @@ function enterPhase(idx) {
     L.polyline(ph.leg.coords, { pane: 'nav', color: casing, weight: 13 }).addTo(navLayer);
     L.polyline(ph.leg.coords, { pane: 'nav', color: css('--bike'), weight: 8 }).addTo(navLayer);
     const end = ph.g.pts[ph.g.pts.length - 1];
-    L.marker(end, { pane: 'nav', interactive: false, keyboard: false, icon: L.divIcon({ className: '', iconSize: [30, 30], iconAnchor: [4, 28], html: '<div style="font-size:28px;line-height:1">🏁</div>' }) }).addTo(navLayer);
-    $('nav-arrived').textContent = ph.toRide ? 'At the station ›' : 'Arrived ›';
+    L.marker(end, { pane: 'nav', interactive: false, keyboard: false, icon: L.divIcon({ className: '', iconSize: [30, 30], iconAnchor: [4, 28], html: '<div class="flagwrap" style="font-size:28px;line-height:1">🏁</div>' }) }).addTo(navLayer);
+    $('nav-arrived').textContent = ph.toRide ? 'At the station ›' : 'Stop & save ■';
     $('nav-icon').textContent = ICON.start; $('nav-dist').textContent = '-'; $('nav-text').textContent = nav.pos ? ph.g.ins[0].text : 'Waiting for GPS…';
     updateBike();
     if (nav.pos) map.setView([nav.pos.lat, nav.pos.lon], 17); else map.fitBounds(L.latLngBounds(ph.leg.coords), { paddingTopLeft: [20, 120], paddingBottomRight: [20, 100] });
@@ -793,7 +813,7 @@ function finishNav() {
     lines: ok ? [`Your ride was saved as a file for Strava: ${(st.distance / 1000).toFixed(1)} km of cycling in ${fmtHms(st.moving)}.${st.legs > 1 ? ' The train rides are paused time.' : ''} It is marked as a commute.`, `Title: ${nav.title}`, 'Upload it at strava.com/upload, or share the file to the Strava app. If Strava shows another title, paste this one.']
               : ['Safe riding!', 'No GPS track was recorded (GPS was off or had no signal), so there is no file to save.'],
     chips: ok ? [`${(st.distance / 1000).toFixed(1)} km`, `${fmtHms(st.moving)} moving`, `${st.legs} cycling ${st.legs === 1 ? 'leg' : 'legs'}`] : [],
-    actions: ok ? [{ label: 'Copy title', run: copyTitle }, { label: 'Save .fit again', run: () => downloadRide('fit') }, { label: 'GPX version', run: () => downloadRide('gpx') }] : [] }];
+    actions: ok ? [{ label: 'Open Strava upload ↗', href: 'https://www.strava.com/upload/select' }, { label: 'Copy title', run: copyTitle }, { label: 'Save .fit again', run: () => downloadRide('fit') }, { label: 'GPX version', run: () => downloadRide('gpx') }] : [] }];
   if (ok) { try { downloadRide('fit'); } catch (e) { toast('Could not save the ride file'); } }  // downloads by itself when you arrive
   renderRail(); $('rail').hidden = false;
 }
@@ -810,7 +830,10 @@ function renderRail() {
     stops = `<ol class="rc-stops"><li class="end">${esc(c.stops[0])}<small>get on here</small></li>${mid.length ? `<li class="mid"><details><summary>${mid.length} ${mid.length === 1 ? 'stop' : 'stops'} in between</summary><ul>${mid.map(s => `<li>${esc(s)}</li>`).join('')}</ul></details></li>` : ''}<li class="end">${esc(c.stops[c.stops.length - 1])}<small>get off here</small></li></ol>`;
   }
   $('rail-card').innerHTML = `<div class="rc" style="--lc:${col}"><div class="rc-icon">${icon}</div><h2>${esc(c.title)}</h2>${c.lines.map(t => `<p>${esc(t)}</p>`).join('')}<div class="rc-chips">${c.chips.map(t => `<span>${esc(t)}</span>`).join('')}</div>${stops}${c.actions && c.actions.length ? '<div class="rc-actions"></div>' : ''}</div>`;
-  (c.actions || []).forEach(a => { const b = document.createElement('button'); b.type = 'button'; b.textContent = a.label; b.onclick = a.run; $('rail-card').querySelector('.rc-actions').appendChild(b); });
+  (c.actions || []).forEach(a => {
+    const b = a.href ? Object.assign(document.createElement('a'), { href: a.href, target: '_blank', rel: 'noopener' }) : Object.assign(document.createElement('button'), { type: 'button', onclick: a.run });
+    b.textContent = a.label; $('rail-card').querySelector('.rc-actions').appendChild(b);
+  });
   $('rail-dots').innerHTML = nav.done ? '' : nav.cards.map((_, k) => `<i class="${k === nav.cardI ? 'on' : ''}"></i>`).join('');
   $('rail-prev').disabled = nav.done || nav.cardI === 0; $('rail-next').disabled = nav.done || nav.cardI === n - 1;
   $('rail-prev').hidden = $('rail-next').hidden = nav.done;
@@ -827,9 +850,58 @@ $('rail-card').addEventListener('touchstart', e => { swipeX = e.touches[0].clien
 $('rail-card').addEventListener('touchend', e => { if (swipeX == null) return; const dx = e.changedTouches[0].clientX - swipeX; swipeX = null; if (Math.abs(dx) > 55) railStep(dx < 0 ? 1 : -1); }, { passive: true });
 document.addEventListener('keydown', e => { if (nav.on && !$('rail').hidden) { if (e.key === 'ArrowRight') railStep(1); else if (e.key === 'ArrowLeft') railStep(-1); } });
 
+// ---- turning the map with your direction of travel (our own implementation: the map element is enlarged and rotated with CSS) ----
+function layoutMap(on) {
+  const el = $('map');
+  if (on) {
+    const D = Math.ceil(Math.hypot(innerWidth, innerHeight)) + 4;   // big enough that no corner shows however it is turned
+    Object.assign(el.style, { position: 'fixed', inset: 'auto', left: '50%', top: '50%', width: D + 'px', height: D + 'px', margin: `${-D / 2}px 0 0 ${-D / 2}px`, transformOrigin: '50% 50%' });
+    el.classList.add('rotating');
+  } else {
+    for (const k of ['position', 'inset', 'left', 'top', 'width', 'height', 'margin', 'transform', 'transformOrigin']) el.style[k] = '';
+    el.style.removeProperty('--unrot'); el.classList.remove('rotating');
+  }
+  map.invalidateSize({ animate: false });
+}
+function setBearing(deg) { nav.bearing = deg; $('map').style.transform = `rotate(${-deg}deg)`; $('map').style.setProperty('--unrot', `${deg}deg`); }
+function turnMap(heading) {                                           // ease towards the direction of travel by the shortest way round
+  const d = ((heading - (nav.bearing % 360) + 540) % 360) - 180;
+  if (Math.abs(d) < 4) return;
+  setBearing(nav.bearing + d * 0.6);
+}
+function setHeadingUp(on) {
+  nav.headingUp = on;
+  document.body.classList.toggle('headingup', on);
+  $('nav-rotate').classList.toggle('on', on); $('nav-rotate').setAttribute('aria-pressed', on);
+  if (on) {
+    layoutMap(true); setBearing(nav.pos && nav.pos.heading != null && !Number.isNaN(nav.pos.heading) ? nav.pos.heading : 0);
+    map.dragging.disable();                                            // dragging would go the wrong way on a turned map
+    map.touchZoom.disable(); map.options.touchZoom = 'center'; map.touchZoom.enable();   // pinch zooms around the centre
+    map.doubleClickZoom.disable();
+  } else {
+    setBearing(0); layoutMap(false);
+    map.dragging.enable(); map.touchZoom.disable(); map.options.touchZoom = true; map.touchZoom.enable(); map.doubleClickZoom.enable();
+  }
+  if (nav.pos) followPos(nav.pos.lat, nav.pos.lon);
+  toast(on ? 'The map now turns with your direction' : 'North is up');
+}
+// keep you on screen: centred, or (turned map) low on the screen so you can see further ahead
+function followPos(lat, lon) {
+  const z = Math.max(map.getZoom(), 17);
+  if (nav.headingUp) {
+    const ahead = Math.round(innerHeight * 0.2), r = nav.bearing * Math.PI / 180;
+    const c = map.unproject(map.project([lat, lon], z).add(L.point(Math.sin(r), -Math.cos(r)).multiplyBy(ahead)), z);
+    map.setView(c, z, { animate: true });
+  } else map.setView([lat, lon], z, { animate: true });
+}
+$('nav-rotate').onclick = () => setHeadingUp(!nav.headingUp);
+$('nav-zin').onclick = () => map.zoomIn(); $('nav-zout').onclick = () => map.zoomOut();
+window.addEventListener('resize', () => { if (nav.headingUp) layoutMap(true); });
+
 // ---- controls ----
 function endNav() {
-  nav.on = false;
+  if (nav.headingUp) setHeadingUp(false);
+  nav.on = false; nav.prev = null; nav.arrived = false;
   if (nav.watch != null && navigator.geolocation) navigator.geolocation.clearWatch(nav.watch);
   nav.watch = null; nav.pos = null;
   try { if (nav.wake) nav.wake.release(); } catch (e) {} nav.wake = null;
@@ -850,8 +922,8 @@ const confirmEnd = () => {
 };
 $('nav-end').onclick = confirmEnd;
 $('rail-end').onclick = confirmEnd;
-$('nav-arrived').onclick = nextPhase;
-$('nav-center').onclick = () => { nav.follow = true; if (nav.pos) map.setView([nav.pos.lat, nav.pos.lon], Math.max(map.getZoom(), 17)); };
+$('nav-arrived').onclick = () => { const ph = nav.phases[nav.i]; if (ph && ph.type === 'bike' && !ph.toRide) finishNav(); else nextPhase(); };   // the last leg ends only when you press Stop & save
+$('nav-center').onclick = () => { nav.follow = true; if (nav.pos) followPos(nav.pos.lat, nav.pos.lon); };
 map.on('dragstart', () => { if (nav.on) nav.follow = false; });
 $('nav-reroute').onclick = () => { // plan again from where you are now, to the same destination
   if (!nav.pos || !picked.to || !planner) return;
