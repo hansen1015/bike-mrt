@@ -1,5 +1,5 @@
 // Keep BUILD in step with <meta name="build"> in index.html and VERSION in sw.js (tests/version.test.mjs checks it)
-const BUILD = 'v16';
+const BUILD = 'v17';
 import { Router } from './router.js';
 import { Planner } from './planner.js';
 import { railFare, sgClock, timeInfo, polyKm, FARE_TYPES } from './fares.js';
@@ -373,7 +373,7 @@ wireSearch('from'); wireSearch('to');
 // ================= planning =================
 let plans = [], activePlan = 0, replanTimer, routeBounds = null;
 // navigation state (declared here because the page layout code below reads it while loading)
-const nav = { on: false, plan: null, phases: [], i: 0, watch: null, along: 0, offCount: 0, follow: true, wake: null, cards: [], cardI: 0, pos: null, prev: null, done: false, arrived: false, headingUp: false, bearing: 0, rec: new Recorder() };
+const nav = { on: false, plan: null, phases: [], i: 0, watch: null, along: 0, offCount: 0, follow: true, wake: null, cards: [], cardI: 0, pos: null, prev: null, done: false, arrived: false, recording: false, headingUp: false, bearing: 0, rec: new Recorder() };
 window.__bikeMrtNav = nav; // handy for debugging and tests
 
 // ---- departure time: "now" or a picked time, always read as Singapore time ----
@@ -669,8 +669,8 @@ async function startNav(i, keepWatch = false, resume = null) {
   }
   show(i);
   nav.on = true; nav.plan = plans[i]; nav.done = false;
-  if (resume) { nav.rec = Recorder.restore(resume.rec); nav.title = resume.title; }
-  else if (!keepWatch) { nav.rec = new Recorder(); nav.title = rideTitle(); }   // a re-route keeps the original title
+  if (resume) { nav.rec = Recorder.restore(resume.rec); nav.title = resume.title; nav.recording = !!resume.recording; }
+  else if (!keepWatch) { nav.rec = new Recorder(); nav.title = rideTitle(); nav.recording = false; }   // a re-route keeps the original title and the recording as it was
   nav.phases = buildPhases(nav.plan);
   document.body.classList.add('navigating'); $('nav').hidden = false;
   document.documentElement.style.setProperty('--sheetH', '86px');
@@ -693,7 +693,7 @@ function saveNavState(force = false) {            // small state + the GPS point
   lastNavSave = now;
   try {
     localStorage.setItem(NAV_KEY, JSON.stringify({ v: 1, saved: now, i: nav.i, along: nav.along, arrived: nav.arrived, cardI: nav.cardI, done: nav.done, headingUp: nav.headingUp,
-      title: nav.title, from: $('from').value, to: $('to').value, pf: picked.from, pt: picked.to, rec: nav.rec.snapshot() }));
+      title: nav.title, recording: nav.recording, from: $('from').value, to: $('to').value, pf: picked.from, pt: picked.to, rec: nav.rec.snapshot() }));
   } catch (e) { /* storage full or blocked: carry on without saving */ }
 }
 function savePlan() { try { localStorage.setItem(NAV_PLAN_KEY, JSON.stringify(nav.plan)); } catch (e) {} }
@@ -709,6 +709,7 @@ function applyResume(r) {
   if (ph && ph.type === 'bike') {
     nav.along = Math.max(nav.along, r.along || 0);
     if (r.arrived) { nav.arrived = true; $('nav-arrived').classList.add('attn'); }
+    refreshMainButton();
     updateBike();
   } else if (ph && ph.type === 'rail') { nav.cardI = Math.max(0, Math.min(r.cardI || 0, nav.cards.length - 1)); renderRail(); }
   if (r.headingUp) setHeadingUp(true);
@@ -772,8 +773,8 @@ function onFix(pos) {
   const end = ph.g.pts[ph.g.pts.length - 1];
   if (ph.g.total - nav.along < 25 || navDist(end, [lat, lon]) < 25) {
     if (!nav.arrived) {                                     // at the station or the destination: keep recording until you press the button
-      nav.arrived = true; $('nav-arrived').classList.add('attn'); $('nav-off').hidden = true;
-      toast(ph.toRide ? 'You are at the station. Still recording: press Pause & MRT when you go in' : 'You have arrived. Still recording: press Stop & save when you are done');
+      nav.arrived = true; $('nav-arrived').classList.add('attn'); $('nav-off').hidden = true; refreshMainButton();
+      toast(!nav.recording ? (ph.toRide ? 'You are at the station' : 'You have arrived') : ph.toRide ? 'You are at the station. Still recording: press Pause & MRT when you go in' : 'You have arrived. Still recording: press Stop & save when you are done');
       updateBike(); saveNavState(true);
     }
   }
@@ -784,8 +785,9 @@ function updateBike() {
   const ph = nav.phases[nav.i]; if (!ph || ph.type !== 'bike') return;
   if (nav.arrived) {
     $('nav-icon').textContent = ph.toRide ? '🚇' : '🏁'; $('nav-dist').textContent = 'Arrived';
-    $('nav-text').textContent = ph.toRide ? 'Still recording. Press Pause & MRT when you go in' : 'Still recording. Press Stop & save when you are done';
-    $('nav-remain').textContent = ph.toRide ? 'At the station' : 'You have arrived'; $('nav-sub').textContent = 'Recording continues'; return;
+    $('nav-text').textContent = !nav.recording ? (ph.toRide ? 'Press To the MRT when you go in' : 'Press Finish to end the navigation')
+      : ph.toRide ? 'Still recording. Press Pause & MRT when you go in' : 'Still recording. Press Stop & save when you are done';
+    $('nav-remain').textContent = ph.toRide ? 'At the station' : 'You have arrived'; $('nav-sub').textContent = nav.recording ? 'Recording continues' : 'Not recording'; return;
   }
   const g = ph.g, ni = nextInstruction(g, nav.along), d = Math.max(0, ni.along - nav.along);
   $('nav-icon').textContent = ICON[ni.type] || '↑';
@@ -793,7 +795,29 @@ function updateBike() {
   $('nav-text').textContent = ni.text;
   const rem = Math.max(0, g.total - nav.along);
   $('nav-remain').textContent = `${fmtDist(rem)} · ${Math.max(1, Math.round(ph.leg.min * (g.total ? rem / g.total : 0)))} min`;
-  $('nav-sub').textContent = `to ${ph.target}`;
+  navSub(ph);
+}
+
+// the line under the distance: whether the GPS is locked and whether the ride is being recorded
+function navSub(ph) {
+  const sub = $('nav-sub'), p = nav.pos;
+  if (nav.recording) { sub.innerHTML = `<span class="recdot">●</span> Recording · to ${esc(ph.target)}`; return; }
+  const gps = !p ? '🔴 Waiting for GPS…' : p.accuracy <= 15 ? `🟢 GPS locked (±${Math.round(p.accuracy)} m)` : p.accuracy <= 40 ? `🟡 GPS ±${Math.round(p.accuracy)} m` : `🔴 GPS weak (±${Math.round(p.accuracy)} m)`;
+  sub.textContent = `${gps} · not recording`;
+}
+
+// the big button on the bar: Start recording, then Pause & MRT / Stop & save
+function refreshMainButton() {
+  const ph = nav.phases[nav.i], b = $('nav-arrived');
+  if (!ph || ph.type !== 'bike') return;
+  b.classList.toggle('rec', !nav.recording && !nav.arrived);
+  b.textContent = !nav.recording ? (nav.arrived ? (ph.toRide ? 'To the MRT ›' : 'Finish ›') : '● Start recording') : ph.toRide ? 'Pause & MRT ⏸' : 'Stop & save ■';
+}
+function startRecording() {
+  const p = nav.pos;
+  if ((!p || p.accuracy > 50) && !confirm('The GPS is not locked yet, so the start of the track may be inaccurate. Start recording anyway?')) return;
+  nav.recording = true; nav.rec.startLeg();
+  refreshMainButton(); updateBike(); saveNavState(true); toast('Recording started');
 }
 
 function enterPhase(idx) {
@@ -803,14 +827,14 @@ function enterPhase(idx) {
   if (!ph) { finishNav(); return; }
   if (ph.type === 'bike') {
     if (ph.g.pts.length < 2) { enterPhase(idx + 1); return; }
-    nav.rec.startLeg();            // timer runs while you cycle (a resume after the train ride)
+    if (nav.recording) nav.rec.startLeg();   // timer runs while you cycle (a resume after the train ride)
     $('rail').hidden = true; $('nav-top').hidden = false; $('nav-bottom').hidden = false; $('nav-fabs').hidden = false;
     const casing = css('--casing');
     L.polyline(ph.leg.coords, { pane: 'nav', color: casing, weight: 13 }).addTo(navLayer);
     L.polyline(ph.leg.coords, { pane: 'nav', color: css('--bike'), weight: 8 }).addTo(navLayer);
     const end = ph.g.pts[ph.g.pts.length - 1];
     L.marker(end, { pane: 'nav', interactive: false, keyboard: false, icon: L.divIcon({ className: '', iconSize: [30, 30], iconAnchor: [4, 28], html: '<div class="flagwrap" style="font-size:28px;line-height:1">🏁</div>' }) }).addTo(navLayer);
-    $('nav-arrived').textContent = ph.toRide ? 'Pause & MRT ⏸' : 'Stop & save ■';
+    refreshMainButton();
     $('nav-icon').textContent = ICON.start; $('nav-dist').textContent = '-'; $('nav-text').textContent = nav.pos ? ph.g.ins[0].text : 'Waiting for GPS…';
     updateBike();
     if (nav.pos) map.setView([nav.pos.lat, nav.pos.lon], 17); else map.fitBounds(L.latLngBounds(ph.leg.coords), { paddingTopLeft: [20, 120], paddingBottomRight: [20, 100] });
@@ -972,7 +996,11 @@ const confirmEnd = () => {
 };
 $('nav-end').onclick = confirmEnd;
 $('rail-end').onclick = confirmEnd;
-$('nav-arrived').onclick = () => { const ph = nav.phases[nav.i]; if (ph && ph.type === 'bike' && !ph.toRide) finishNav(); else nextPhase(); };   // the last leg ends only when you press Stop & save
+$('nav-arrived').onclick = () => {
+  const ph = nav.phases[nav.i];
+  if (ph && ph.type === 'bike' && !nav.recording && !nav.arrived) { startRecording(); return; }   // wait for the GPS to lock, then press it
+  if (ph && ph.type === 'bike' && !ph.toRide) finishNav(); else nextPhase();
+};   // the last leg ends only when you press Stop & save
 $('nav-center').onclick = () => { nav.follow = true; if (nav.pos) followPos(nav.pos.lat, nav.pos.lon); };
 map.on('dragstart', () => { if (nav.on) nav.follow = false; });
 $('nav-reroute').onclick = () => { // plan again from where you are now, to the same destination

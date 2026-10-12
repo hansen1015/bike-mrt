@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <title>Bike-MRT</title>
-<meta name="build" content="v16">
+<meta name="build" content="v17">
 <script>
   // safety net: if something breaks (for example after an update left old and new files mixed), show a banner with a one-tap fix
   (function () {
@@ -138,6 +138,8 @@
   body.headingup #attr-static { display:block; }
   .fab.on { background:var(--accent); color:var(--on-accent); }
   @keyframes pulse { 50% { box-shadow:0 0 0 7px rgba(60,207,145,.35); } }
+  .navbtn.rec { background:#d92d20; color:#fff; }
+  .recdot { color:#e5342d; animation:blink 1.2s infinite; } @keyframes blink { 50% { opacity:.25; } }
   .navbtn.attn { animation:pulse 1.4s infinite; }
   body.navigating #toast { top:118px; transform:translate(-50%,-220px); }
   body.navigating #toast.show { transform:translate(-50%,0); }
