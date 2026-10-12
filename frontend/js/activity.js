@@ -65,9 +65,11 @@ export class Recorder {
   }
 
   // ---------- FIT ----------
-  toFIT() {
+  // commute = true sets the FIT sub-sport to 48 ("commuting"), which Strava turns into its Commute tag
+  toFIT({ commute = true } = {}) {
     const legs = this._prepared();
     if (!legs.length) return null;
+    const subSport = commute ? 48 : 0;
     const w = new FitWriter();
     const T = ms => Math.round(ms / 1000) - FIT_EPOCH;
     const semi = d => Math.round(d * SEMI);
@@ -91,7 +93,7 @@ export class Recorder {
     const first = legs[0].pts[0];
     w.msg(18, [[254, 'u16'], [253, 'u32'], [0, 'enum'], [1, 'enum'], [2, 'u32'], [3, 's32'], [4, 's32'], [7, 'u32'], [8, 'u32'], [9, 'u32'], [14, 'u16'], [15, 'u16'], [5, 'enum'], [6, 'enum'], [25, 'u16'], [26, 'u16']],
       [0, endT, 8, 1, startT, semi(first.lat), semi(first.lon), Math.round(st.elapsed * 1000), Math.round(st.moving * 1000), Math.round(st.distance * 100),
-        Math.round(Math.min(65, st.moving ? st.distance / st.moving : 0) * 1000), Math.round(Math.min(65, maxSpd) * 1000), 2, 0, 0, legs.length]);      // session: cycling
+        Math.round(Math.min(65, st.moving ? st.distance / st.moving : 0) * 1000), Math.round(Math.min(65, maxSpd) * 1000), 2, subSport, 0, legs.length]);      // session: cycling (commuting)
     w.msg(34, [[253, 'u32'], [0, 'u32'], [1, 'u16'], [2, 'enum'], [3, 'enum'], [4, 'enum']], [endT, Math.round(st.moving * 1000), 1, 0, 26, 1]);       // activity
     return w.finish();
   }

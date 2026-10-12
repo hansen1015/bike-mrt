@@ -1,11 +1,11 @@
 // Keep BUILD in step with <meta name="build"> in index.html and VERSION in sw.js (tests/version.test.mjs checks it)
-const BUILD = 'v10';
+const BUILD = 'v11';
 import { Router } from './router.js';
 import { Planner } from './planner.js';
 import { railFare, sgClock, timeInfo, polyKm, FARE_TYPES } from './fares.js';
 import { searchPlaces } from './search.js';
 import { Recorder } from './activity.js';
-import { buildGuidance, locate, nextInstruction, railCards, fmtDist, spoken, dist as navDist, ICON } from './nav.js';
+import { buildGuidance, locate, nextInstruction, railCards, fmtDist, dist as navDist, ICON } from './nav.js';
 
 const $ = id => document.getElementById(id);
 const L = window.L;
@@ -25,7 +25,7 @@ const DEFAULT_SETTINGS = {
   theme: 'auto', showNet: true, showLabels: true,
   speed: 16, maxRide: 15, allowMid: true, bikePen: 1,
   lines: ['NS', 'EW', 'NE', 'CC', 'DT', 'TE', 'BP', 'SK', 'PG'],
-  fold: 2.5, alight: 2, transferAdj: 0, transferPen: 0, depart: 'now', showFares: true, fareType: 'adult', alts: 3, voice: false,
+  fold: 2.5, alight: 2, transferAdj: 0, transferPen: 0, depart: 'now', showFares: true, fareType: 'adult', alts: 3,
 };
 // chip key -> actual line codes in the data (the airport branch rides with East-West, each LRT system has two loops)
 const LINE_GROUPS = { NS: ['NS'], EW: ['EW', 'CG'], NE: ['NE'], CC: ['CC'], DT: ['DT'], TE: ['TE'], BP: ['BP'], SK: ['SE', 'SW'], PG: ['PE', 'PW'] };
@@ -348,7 +348,7 @@ wireSearch('from'); wireSearch('to');
 // ================= planning =================
 let plans = [], activePlan = 0, replanTimer, routeBounds = null;
 // navigation state (declared here because the page layout code below reads it while loading)
-const nav = { on: false, plan: null, phases: [], i: 0, watch: null, along: 0, offCount: 0, follow: true, voice: false, wake: null, said: '', cards: [], cardI: 0, pos: null, done: false, rec: new Recorder() };
+const nav = { on: false, plan: null, phases: [], i: 0, watch: null, along: 0, offCount: 0, follow: true, wake: null, cards: [], cardI: 0, pos: null, done: false, rec: new Recorder() };
 window.__bikeMrtNav = nav; // handy for debugging and tests
 
 // ---- departure time: "now" or a picked time, always read as Singapore time ----
@@ -629,13 +629,12 @@ document.addEventListener('visibilitychange', () => { if (nav.on && document.vis
 function startNav(i, keepWatch = false) {
   if (!plans[i] || !railData) return;
   show(i);
-  nav.on = true; nav.plan = plans[i]; nav.voice = settings.voice; nav.done = false;
-  if (!keepWatch) nav.rec = new Recorder();
+  nav.on = true; nav.plan = plans[i]; nav.done = false;
+  if (!keepWatch) { nav.rec = new Recorder(); nav.title = rideTitle(); }   // a re-route keeps the original title
   nav.phases = buildPhases(nav.plan);
   document.body.classList.add('navigating'); $('nav').hidden = false;
   document.documentElement.style.setProperty('--sheetH', '86px');
   map.getPane('route').style.opacity = 0.35;
-  $('nav-voice').textContent = nav.voice ? '🔊' : '🔇';
   if (!keepWatch) startWatch();
   lockScreen();
   enterPhase(0);
@@ -689,14 +688,10 @@ function updateBike() {
   const rem = Math.max(0, g.total - nav.along);
   $('nav-remain').textContent = `${fmtDist(rem)} · ${Math.max(1, Math.round(ph.leg.min * (g.total ? rem / g.total : 0)))} min`;
   $('nav-sub').textContent = `to ${ph.target}`;
-  if (nav.voice && 'speechSynthesis' in window) {
-    const key = `${nav.i}:${g.ins.indexOf(ni)}:${d < 30 ? 'now' : d < 120 ? 'near' : d < 350 ? 'far' : 'early'}`;
-    if (!key.endsWith('early') && key !== nav.said) { nav.said = key; speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(spoken(ni, d)); u.lang = 'en-GB'; speechSynthesis.speak(u); }
-  }
 }
 
 function enterPhase(idx) {
-  nav.i = idx; nav.along = 0; nav.offCount = 0; nav.follow = true; nav.said = '';
+  nav.i = idx; nav.along = 0; nav.offCount = 0; nav.follow = true;
   navLayer.clearLayers(); $('nav-off').hidden = true;
   const ph = nav.phases[idx];
   if (!ph) { finishNav(); return; }
@@ -733,13 +728,22 @@ function saveBlob(name, data, type) {
   const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 60000);
 }
+// "Commute: NTU Binjai Hall → ION Orchard", from the From / To fields when the trip starts
+const placeLabel = el => {
+  const v = el.value.trim();
+  const t = /^Pin \(/.test(v) ? 'a map pin' : /^My location/.test(v) ? 'My location' : v || 'start';
+  return t.length > 36 ? t.slice(0, 35).trim() + '…' : t;
+};
+const rideTitle = () => `Commute: ${placeLabel($('from'))} → ${placeLabel($('to'))}`;
+const fileSlug = t => t.replace(/→/g, 'to').replace(/[^A-Za-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 70);
 function downloadRide(kind) {
   const st = nav.rec.stats(); if (!st.start) return false;
-  const base = `Bike-MRT_${sgStamp(st.start)}`;
-  if (kind === 'gpx') saveBlob(base + '.gpx', nav.rec.toGPX('Bike-MRT ride'), 'application/gpx+xml');
-  else saveBlob(base + '.fit', nav.rec.toFIT(), 'application/octet-stream');
+  const base = `Bike-MRT_${fileSlug(nav.title || 'ride')}_${sgStamp(st.start)}`;
+  if (kind === 'gpx') saveBlob(base + '.gpx', nav.rec.toGPX(nav.title || 'Bike-MRT ride'), 'application/gpx+xml');
+  else saveBlob(base + '.fit', nav.rec.toFIT({ commute: true }), 'application/octet-stream');
   return true;
 }
+const copyTitle = () => { const t = nav.title || 'Commute'; (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(() => toast('Title copied'), () => toast(t)); };
 const fmtHms = s => { s = Math.round(s); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60); return h ? `${h} h ${m} min` : `${m} min ${s % 60} s`; };
 
 function finishNav() {
@@ -748,10 +752,10 @@ function finishNav() {
   const st = nav.rec.stats(), ok = nav.rec.usable;
   nav.done = true; nav.cardI = 0;
   nav.cards = [{ kind: 'done', line: '', title: 'You have arrived', stops: [],
-    lines: ok ? [`Your ride was saved as a file for Strava: ${(st.distance / 1000).toFixed(1)} km of cycling in ${fmtHms(st.moving)}. The train rides are paused time.`, 'Upload it at strava.com/upload, or share the file to the Strava app.']
+    lines: ok ? [`Your ride was saved as a file for Strava: ${(st.distance / 1000).toFixed(1)} km of cycling in ${fmtHms(st.moving)}.${st.legs > 1 ? ' The train rides are paused time.' : ''} It is marked as a commute.`, `Title: ${nav.title}`, 'Upload it at strava.com/upload, or share the file to the Strava app. If Strava shows another title, paste this one.']
               : ['Safe riding!', 'No GPS track was recorded (GPS was off or had no signal), so there is no file to save.'],
     chips: ok ? [`${(st.distance / 1000).toFixed(1)} km`, `${fmtHms(st.moving)} moving`, `${st.legs} cycling ${st.legs === 1 ? 'leg' : 'legs'}`] : [],
-    actions: ok ? [{ label: 'Save .fit again', run: () => downloadRide('fit') }, { label: 'GPX version', run: () => downloadRide('gpx') }] : [] }];
+    actions: ok ? [{ label: 'Copy title', run: copyTitle }, { label: 'Save .fit again', run: () => downloadRide('fit') }, { label: 'GPX version', run: () => downloadRide('gpx') }] : [] }];
   if (ok) { try { downloadRide('fit'); } catch (e) { toast('Could not save the ride file'); } }  // downloads by itself when you arrive
   renderRail(); $('rail').hidden = false;
 }
@@ -791,7 +795,6 @@ function endNav() {
   if (nav.watch != null && navigator.geolocation) navigator.geolocation.clearWatch(nav.watch);
   nav.watch = null; nav.pos = null;
   try { if (nav.wake) nav.wake.release(); } catch (e) {} nav.wake = null;
-  if ('speechSynthesis' in window) speechSynthesis.cancel();
   navLayer.clearLayers();
   if (posMarker) { posMarker.remove(); accCircle.remove(); posMarker = accCircle = null; }
   $('nav').hidden = true; $('rail').hidden = true;
@@ -811,10 +814,6 @@ $('nav-end').onclick = confirmEnd;
 $('rail-end').onclick = confirmEnd;
 $('nav-arrived').onclick = nextPhase;
 $('nav-center').onclick = () => { nav.follow = true; if (nav.pos) map.setView([nav.pos.lat, nav.pos.lon], Math.max(map.getZoom(), 17)); };
-$('nav-voice').onclick = () => {
-  nav.voice = !nav.voice; settings.voice = nav.voice; saveSettings(); $('nav-voice').textContent = nav.voice ? '🔊' : '🔇';
-  if (nav.voice && 'speechSynthesis' in window) { const u = new SpeechSynthesisUtterance('Voice guidance on'); u.lang = 'en-GB'; speechSynthesis.speak(u); }
-};
 map.on('dragstart', () => { if (nav.on) nav.follow = false; });
 $('nav-reroute').onclick = () => { // plan again from where you are now, to the same destination
   if (!nav.pos || !picked.to || !planner) return;

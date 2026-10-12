@@ -160,6 +160,3 @@ export function railCards(leg, ctx) {
   });
   return cards;
 }
-
-// what to say aloud for an upcoming manoeuvre
-export const spoken = (ins, d) => (ins.type === 'arrive' ? ins.text : d < 40 ? ins.text : `In ${fmtDist(d)}, ${ins.text.charAt(0).toLowerCase()}${ins.text.slice(1)}`);

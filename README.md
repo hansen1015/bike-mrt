@@ -5,7 +5,7 @@ Fastest door-to-door commute planner for a **trifold bicycle + MRT/LRT** in Sing
 - total time, cycling km/minutes and rail minutes,
 - every leg on a map (cycle routes along real roads and park connectors, rail along the real track),
 - the MRT/LRT lines, stations and transfers,
-- **turn-by-turn navigation** ("Start navigation"): on the cycling legs the map follows your GPS position with the next turn, the street name and the distance (optional voice), and warns you when you are off the route, with a re-route button; at the station it switches to **step cards for the train ride** that you page through with the left and right arrows (enter at this exit, take this line towards X, change here, get off and leave by that exit), and then carries on cycling; when you arrive it downloads **one activity file for Strava** with your real GPS track of the cycling parts (the train rides are paused time),
+- **turn-by-turn navigation** ("Start navigation"): on the cycling legs the map follows your GPS position with the next turn, the street name and the distance, and warns you when you are off the route, with a re-route button; at the station it switches to **step cards for the train ride** that you page through with the left and right arrows (enter at this exit, take this line towards X, change here, get off and leave by that exit), and then carries on cycling; when you arrive it downloads **one activity file for Strava** with your real GPS track of the cycling parts (the train rides are paused time),
 - an **intro screen** explaining how to use the app, with an "add to home screen" prompt where the browser supports it,
 - **search by building, business or station name** (merges MRT/LRT stations, [OneMap](https://www.onemap.gov.sg/) for buildings, landmarks and postal codes, and [Photon](https://photon.komoot.io/) for OpenStreetMap shops, cafes, clinics and other businesses), with a clear button and keyboard support,
 - **which station exit to use** for every train ride ("Enter at Exit A · Leave at Exit 4"), drawn on the map, with the cycling routed to and from that exact exit,
@@ -80,13 +80,17 @@ There is no public timetable or transfer-time dataset for the MRT/LRT, so the ap
 - **Changing lines:** walking time plus the wait for the next train on the new line. Walking defaults to 3 min. [City Hall](https://landtransportguru.net/city-hall-station/), Raffles Place, Jurong East and Tanah Merah (Changi Airport branch) are cross-platform (1 min). Tampines (about 300 m linkway, 6.5 min) and [Newton](https://landtransportguru.net/newton-station/) (56 m linkway, 4 min) take longer, and the LRT at Bukit Panjang is about 200 m from the Downtown Line (4 min). These are estimates, and you can add or remove minutes per change in Settings.
 - **Boarding:** folding the bike, the gates and walking to the platform (2.5 min by default) plus the wait for the train. Leaving the system costs 2 min to exit and unfold.
 
+## Plans
+
+The list shows the fastest plans that use the MRT/LRT (as many as you choose in Settings) and, **always as the last option, *Cycle all the way***: the whole trip by bike, whatever the "longest single ride" setting says. If cycling the whole way is the fastest of all, it is labelled *Cycle all the way · fastest*.
+
 ## Navigation
 
 Tapping *Start navigation* walks through the plan leg by leg.
 
 - **Cycling legs:** the turn-by-turn directions are worked out in the browser from the route: at each junction the change of heading (measured over about 12 m before and after it) decides *turn left / bear right / U-turn*, junctions closer than 30 m are merged (roundabouts, zig-zags) and the street name comes from OpenStreetMap (unnamed paths say *the cycle path* or *the footpath*). Your GPS position is projected onto the route to get the distance to the next turn and the time left. After three fixes more than 45 m (or the GPS accuracy) away from the route you are told you are off route and can re-plan from where you are.
 - **Train rides:** GPS rarely works underground, so the train part is a set of cards you move through yourself with the arrows (or by swiping, or the keyboard arrows). The direction on each line ("towards Pasir Ris") comes from the station numbers along the ride.
-- **The screen stays on** (Wake Lock) while navigating, where the browser supports it. Voice guidance uses the browser's speech synthesis and can be switched on with the speaker button.
+- **The screen stays on** (Wake Lock) while navigating, where the browser supports it.
 - Everything runs on the phone, so navigation keeps working with a weak signal once the map has loaded (map tiles themselves need data).
 
 ## Strava file
@@ -94,6 +98,8 @@ Tapping *Start navigation* walks through the plan leg by leg.
 While you navigate, the phone's real GPS fixes of the **cycling legs** are recorded (one point a second, fixes worse than 50 m accuracy are skipped). When you press *Arrived* (or arrive automatically) the app downloads one file, `Bike-MRT_<date>_<time>.fit`:
 
 - **FIT** is the format Garmin and Wahoo devices write, so it can say "paused": the timer stops when you reach the station and starts again when you continue cycling, the distance counter does not move during the train ride (no giant jump from station to station), each cycling leg is a lap, and the sport is cycling. Strava therefore shows your moving time without the MRT ride.
+- **Commute:** the FIT sub-sport is set to *commuting* (code 48), which Strava turns into its **Commute** tag.
+- **Title:** the title is `Commute: <From> → <To>` (taken from the From and To fields when the trip starts). It is in the file name and in the GPX. I found no evidence that Strava reads a title from inside a FIT file, so the arrival card also shows the title with a **Copy title** button to paste on the upload page.
 - The positions are the actual GPS track, not the planned route.
 - A **GPX** version (one track segment per cycling leg) is available on the arrival card as a fallback; GPX has no pause concept.
 - Upload at strava.com/upload, or share the file to the Strava app. Strava replaces the elevation with its own data.

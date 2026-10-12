@@ -72,28 +72,40 @@ export class Planner {
     const fromStations = R.oneToMany(sd, this.stationSnaps.map((sn, i) => nearD[i] ? sn : null), true, 150);
     const direct = R.route(so, sd);
 
-    const plans = [], seen = new Set();
+    const variants = [], seen = new Set();
     const base = Math.max(1, o.bike_pen);
     for (const [label, pen] of [["Fastest", base], ["Less cycling", base * 1.6], ["Least cycling", base * 2.6]]) {
       const res = this._dijkstra(o, scale, pen, toStations, fromStations, direct);
       if (!res) continue;
       const sig = JSON.stringify(res.legs.map(l => [l.mode, l.from, l.to, l.segments && l.segments.map(s => s.line + s.from + s.to)]));
       if (seen.has(sig)) continue;
-      seen.add(sig); res.label = label; plans.push(res);
+      seen.add(sig); res.label = label; variants.push(res);
     }
+    // plans that use the trains. A plan that is only cycling is dropped here: the "Cycle all the way" option below replaces it.
+    const plans = variants.filter(p => p.legs.some(l => l.mode === "mrt"));
     plans.sort((a, b) => a.total_min - b.total_min);
-    if (plans.length) plans[0].label = "Fastest";
     plans.length = Math.min(plans.length, Math.max(1, Math.min(3, o.alternatives)));
-    if (!plans.length) { // say why, so the message can be specific
-      const startOk = !!direct || toStations.some(Boolean), destOk = !!direct || fromStations.some(Boolean);
-      plans.reason = !startOk ? 'start' : !destOk ? 'dest' : 'limits';
+    const cycle = direct ? this._cyclePlan(direct, scale, origin, dest) : null;
+    if (!plans.length && !cycle) { // nothing at all: say why, so the message can be specific
+      const none = [];
+      none.reason = !(toStations.some(Boolean)) ? 'start' : !(fromStations.some(Boolean)) ? 'dest' : 'limits';
+      return none;
     }
     plans.forEach(p => this._addGeometry(p, origin, dest, so, sd, scale));
     plans.sort((a, b) => a.total_min - b.total_min); // choosing exits can shift times slightly
+    const cycleFastest = !!cycle && plans.every(p => cycle.total_min <= p.total_min);
     plans.forEach((p, i) => { // name the plans from their final order
-      p.label = i === 0 ? "Fastest" : p.bike_km < plans[0].bike_km - 0.05 ? (i === 1 ? "Less cycling" : "Least cycling") : "Alternative";
+      p.label = i === 0 ? (cycleFastest ? "Fastest with MRT" : "Fastest") : p.bike_km < plans[0].bike_km - 0.05 ? (i === 1 ? "Less cycling" : "Least cycling") : "Alternative";
     });
+    if (cycle) { cycle.label = cycleFastest ? "Cycle all the way · fastest" : "Cycle all the way"; plans.push(cycle); } // always the last option
     return plans;
+  }
+
+  // the whole trip by bike, whatever the "longest single ride" setting says
+  _cyclePlan(direct, scale, origin, dest) {
+    const min = +(direct.min * scale).toFixed(1), km = +direct.km.toFixed(2);
+    const leg = { mode: "bike", from: "Start", to: "Destination", min, km, coords: direct.coords, segs: direct.segs, from_pt: [origin.lat, origin.lon], to_pt: [dest.lat, dest.lon] };
+    return { total_min: min, bike_km: km, bike_min: min, mrt_min: 0, legs: [leg] };
   }
 
   _dijkstra(o, scale, pen, toSt, fromSt, direct) {

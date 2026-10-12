@@ -29,6 +29,17 @@ let none = 0; const N = 150;
 for (let i = 0; i < N; i++) { try { if (!P.plan(pt(), pt(), opts).length) none++; } catch (e) { none++; } }   // a few points fall on road-less restricted islands
 assert.ok(none <= 6, `${none} of ${N} random trips had no route`);
 
+// "Cycle all the way" is always offered, as the last option
+for (const [name, to] of [["ION Orchard", [1.303979, 103.832032]], ["Changi T3", [1.3566, 103.9866]], ["a short hop", [1.3600, 103.6900]]]) {
+  for (const o of [opts, { ...opts, alternatives: 1 }, { ...opts, max_ride_km: 3 }, { ...opts, lines: [] }]) {
+    const ps = P.plan(NTU, { lat: to[0], lon: to[1] }, o);
+    const last = ps.at(-1);
+    assert.ok(last.label.startsWith("Cycle all the way"), `${name}: last option is cycling all the way, got ${last.label}`);
+    assert.ok(last.legs.length === 1 && last.legs[0].mode === "bike" && last.legs[0].coords.length > 2, "one cycling leg with a route");
+    assert.equal(ps.filter(p => p.legs.length === 1 && p.legs[0].mode === "bike").length, 1, "no duplicate cycling-only plan");
+  }
+}
+
 // restricted islands give a helpful message instead of a silent failure
 assert.throws(() => P.plan(NTU, { lat: 1.2650, lon: 103.6990 }, opts), /No cycling roads near the destination/);
 console.log(`routing tests passed (${N - none}/${N} random trips routed)`);

@@ -45,6 +45,9 @@ for (let o = 14; o < 14 + dataSize;) {
 const of = g => msgs.filter(m => m.g === g);
 assert.equal(of(0).length, 1, "file_id"); assert.equal(of(0)[0].v[0], 4, "file type = activity");
 assert.equal(of(34).length, 1, "activity"); assert.equal(of(18).length, 1, "session"); assert.equal(of(18)[0].v[5], 2, "sport = cycling");
+assert.equal(of(18)[0].v[6], 48, "sub-sport = commuting (Strava turns this into its Commute tag)");
+assert.equal(of(18)[0].v[6] === 48, true);
+assert.equal(new DataView(r.toFIT({ commute: false }).buffer).byteLength > 0, true);
 assert.equal(of(19).length, 2, "one lap per cycling leg");
 const events = of(21).map(m => [m.v[253], m.v[0], m.v[1]]);
 assert.deepEqual(events.map(e => e[2]), [0, 4, 0, 4], "timer start, stop (train), start (resume), stop");
